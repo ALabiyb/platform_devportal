@@ -135,15 +135,4 @@ func writeUnauthorized(w http.ResponseWriter, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// expiredSessionCookie returns a Set-Cookie header that immediately deletes
-// the devportal_session cookie in the browser.
-func expiredSessionCookie() *http.Cookie {
-	return &http.Cookie{
-		Name:     "devportal_session",
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	}
-}
+// expiredSessionCookie is defined in handlers.go (shared by middleware and handlers).

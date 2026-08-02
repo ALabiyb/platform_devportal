@@ -8,7 +8,7 @@
 | **Day 01** | **Project Scaffold** — `go.mod`, `config` package, HTTP server skeleton, `Makefile`, `Dockerfile`, `docker-compose.yml`, migrations schema | ✅ |
 | **Day 02** | **Database Layer** — `pgx` connection pool, `db` package with typed query helpers for all 10 tables | ✅ |
 | **Day 03** | **Auth Package** — OIDC provider (Keycloak), GitLab OAuth fallback, DB-backed session store, RBAC middleware | ✅ |
-| **Day 04** | **HTTP Router** — `chi` router, RBAC middleware, rate limiter, request logger, all route definitions wired | ⬜ |
+| **Day 04** | **HTTP Router** — `chi` router, RBAC middleware, rate limiter, request logger, all route definitions wired | ✅ |
 | **Day 05** | **Plugin Interfaces + GitLab Adapter** — all 6 Go interfaces defined, full GitLab adapter implemented | ⬜ |
 | **Day 06** | **Jenkins Adapter** — list folders, ensure folder, create multibranch job, trigger branch scan | ⬜ |
 | **Day 07** | **Harbor + DefectDojo Adapters** — ensure image project, create security product + engagement | ⬜ |

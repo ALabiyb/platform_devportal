@@ -5,10 +5,11 @@
 
 // users.go contains query helpers for the organizations and users tables.
 //
-// UpsertUser is the most important function here — it is called on every
-// successful login to create a new user record or update the display name
-// and email of a returning user. The (provider, provider_id) pair is the
-// stable unique key from the identity provider (Keycloak sub / GitLab ID).
+// Key functions:
+//   - UpsertUser         — called on every OIDC login (create or update)
+//   - CreateLocalUser    — called when an admin creates a local-auth account
+//   - GetLocalUserByEmail — called on every local login to fetch hash + role
+//   - EnsureOrg          — guarantees at least one org exists before first login
 
 package db
 
@@ -25,7 +26,6 @@ import (
 // does not exist yet. Used during bootstrap to guarantee at least one org
 // exists before any user can log in.
 func (db *DB) EnsureOrg(ctx context.Context, name, slug string) (*Organization, error) {
-	// Try to fetch the org first — the common path on every login after bootstrap.
 	org, err := db.GetOrgBySlug(ctx, slug)
 	if err == nil {
 		return org, nil
@@ -34,9 +34,6 @@ func (db *DB) EnsureOrg(ctx context.Context, name, slug string) (*Organization, 
 		return nil, fmt.Errorf("db.EnsureOrg: lookup: %w", err)
 	}
 
-	// Org does not exist — insert it.
-	// ON CONFLICT DO NOTHING handles the race where two goroutines both try
-	// to create the same org simultaneously (only one row will be inserted).
 	const q = `
 		INSERT INTO organizations (name, slug)
 		VALUES ($1, $2)
@@ -49,7 +46,6 @@ func (db *DB) EnsureOrg(ctx context.Context, name, slug string) (*Organization, 
 	}
 	org, err = pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[Organization])
 	if err != nil {
-		// If the INSERT was a no-op (conflict), fall back to a SELECT.
 		if errors.Is(err, pgx.ErrNoRows) {
 			return db.GetOrgBySlug(ctx, slug)
 		}
@@ -77,21 +73,23 @@ func (db *DB) GetOrgBySlug(ctx context.Context, slug string) (*Organization, err
 	return org, nil
 }
 
-// UpsertUser creates a new user record or updates the display name and email
-// of a returning user. The (provider, provider_id) pair is the stable key
-// from the identity provider — it never changes even if the user renames
-// their account in Keycloak or GitLab.
+// UpsertUser creates or updates an OIDC user record on every successful login.
+// The (provider, provider_id) pair is the stable key from Keycloak — it never
+// changes even if the user renames their account.
+// Role is updated on every login so Keycloak group changes take effect immediately.
 func (db *DB) UpsertUser(ctx context.Context, u User) (*User, error) {
 	const q = `
-		INSERT INTO users (org_id, email, display_name, provider, provider_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (org_id, email, display_name, provider, provider_id, role)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (provider, provider_id) DO UPDATE
 			SET email        = EXCLUDED.email,
-			    display_name = EXCLUDED.display_name
-		RETURNING id, org_id, email, display_name, provider, provider_id, created_at
+			    display_name = EXCLUDED.display_name,
+			    role         = EXCLUDED.role
+		RETURNING id, org_id, email, display_name, provider, provider_id,
+		          role, password_hash, is_active, created_at
 	`
 	rows, err := db.pool.Query(ctx, q,
-		u.OrgID, u.Email, u.DisplayName, u.Provider, u.ProviderID,
+		u.OrgID, u.Email, u.DisplayName, u.Provider, u.ProviderID, u.Role,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("db.UpsertUser: query: %w", err)
@@ -104,10 +102,10 @@ func (db *DB) UpsertUser(ctx context.Context, u User) (*User, error) {
 }
 
 // GetUserByID returns the user with the given UUID primary key.
-// Returns pgx.ErrNoRows if no user has that ID.
 func (db *DB) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	const q = `
-		SELECT id, org_id, email, display_name, provider, provider_id, created_at
+		SELECT id, org_id, email, display_name, provider, provider_id,
+		       role, password_hash, is_active, created_at
 		FROM users
 		WHERE id = $1
 	`
@@ -123,11 +121,11 @@ func (db *DB) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 }
 
 // GetUserByProvider looks up a user by the (provider, providerID) pair.
-// Used during auth callback to find an existing user before calling UpsertUser.
-// Returns pgx.ErrNoRows if the user has never logged in before.
+// Used during OIDC callback to find existing accounts.
 func (db *DB) GetUserByProvider(ctx context.Context, provider, providerID string) (*User, error) {
 	const q = `
-		SELECT id, org_id, email, display_name, provider, provider_id, created_at
+		SELECT id, org_id, email, display_name, provider, provider_id,
+		       role, password_hash, is_active, created_at
 		FROM users
 		WHERE provider = $1 AND provider_id = $2
 	`
@@ -140,4 +138,129 @@ func (db *DB) GetUserByProvider(ctx context.Context, provider, providerID string
 		return nil, fmt.Errorf("db.GetUserByProvider: %w", err)
 	}
 	return user, nil
+}
+
+// GetLocalUserByEmail returns a local-auth user by email.
+// Returns pgx.ErrNoRows if no local user exists with that email.
+// Includes password_hash so the caller can verify the bcrypt hash.
+func (db *DB) GetLocalUserByEmail(ctx context.Context, email string) (*User, error) {
+	const q = `
+		SELECT id, org_id, email, display_name, provider, provider_id,
+		       role, password_hash, is_active, created_at
+		FROM users
+		WHERE email = $1 AND provider = 'local'
+	`
+	rows, err := db.pool.Query(ctx, q, email)
+	if err != nil {
+		return nil, fmt.Errorf("db.GetLocalUserByEmail: query: %w", err)
+	}
+	user, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[User])
+	if err != nil {
+		return nil, fmt.Errorf("db.GetLocalUserByEmail: %w", err)
+	}
+	return user, nil
+}
+
+// CreateLocalUser inserts a new local-auth user with a pre-hashed password.
+// The hash must be a bcrypt hash — the plaintext must never reach this function.
+func (db *DB) CreateLocalUser(ctx context.Context, orgID uuid.UUID, email, displayName, role, passwordHash string) (*User, error) {
+	const q = `
+		INSERT INTO users (org_id, email, display_name, provider, provider_id, role, password_hash)
+		VALUES ($1, $2, $3, 'local', $2, $4, $5)
+		ON CONFLICT (provider, provider_id) DO NOTHING
+		RETURNING id, org_id, email, display_name, provider, provider_id,
+		          role, password_hash, is_active, created_at
+	`
+	rows, err := db.pool.Query(ctx, q, orgID, email, displayName, role, passwordHash)
+	if err != nil {
+		return nil, fmt.Errorf("db.CreateLocalUser: query: %w", err)
+	}
+	user, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[User])
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("db.CreateLocalUser: email already registered")
+		}
+		return nil, fmt.Errorf("db.CreateLocalUser: scan: %w", err)
+	}
+	return user, nil
+}
+
+// CountUsers returns the number of users in the org.
+// Used by the local-auth bootstrap check: if count == 0, first register = admin.
+func (db *DB) CountUsers(ctx context.Context, orgID uuid.UUID) (int64, error) {
+	var n int64
+	err := db.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE org_id = $1`, orgID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("db.CountUsers: %w", err)
+	}
+	return n, nil
+}
+
+// SetUserPasswordHash updates the bcrypt password hash for a local user.
+// Used by the admin "reset password" endpoint.
+func (db *DB) SetUserPasswordHash(ctx context.Context, userID uuid.UUID, hash string) error {
+	tag, err := db.pool.Exec(ctx,
+		`UPDATE users SET password_hash = $1 WHERE id = $2 AND provider = 'local'`,
+		hash, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("db.SetUserPasswordHash: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db.SetUserPasswordHash: user not found or not a local account")
+	}
+	return nil
+}
+
+// DeactivateUser sets is_active = false for the given user.
+// The user is blocked from logging in but their audit history is preserved.
+func (db *DB) DeactivateUser(ctx context.Context, userID uuid.UUID) error {
+	tag, err := db.pool.Exec(ctx,
+		`UPDATE users SET is_active = FALSE WHERE id = $1`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("db.DeactivateUser: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db.DeactivateUser: user not found")
+	}
+	return nil
+}
+
+// ListUsers returns all users in the given org, ordered by created_at desc.
+// Used by the admin user management page.
+func (db *DB) ListUsers(ctx context.Context, orgID uuid.UUID) ([]User, error) {
+	const q = `
+		SELECT id, org_id, email, display_name, provider, provider_id,
+		       role, password_hash, is_active, created_at
+		FROM users
+		WHERE org_id = $1
+		ORDER BY created_at DESC
+	`
+	rows, err := db.pool.Query(ctx, q, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("db.ListUsers: query: %w", err)
+	}
+	users, err := pgx.CollectRows(rows, pgx.RowToStructByName[User])
+	if err != nil {
+		return nil, fmt.Errorf("db.ListUsers: scan: %w", err)
+	}
+	return users, nil
+}
+
+// UpdateUserRole sets the RBAC role for a user.
+// Admin only — used by the user management API.
+func (db *DB) UpdateUserRole(ctx context.Context, userID uuid.UUID, role string) error {
+	tag, err := db.pool.Exec(ctx,
+		`UPDATE users SET role = $1 WHERE id = $2`,
+		role, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("db.UpdateUserRole: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db.UpdateUserRole: user not found")
+	}
+	return nil
 }

@@ -12,8 +12,9 @@
 -- Or automatically via docker-compose on first container start
 -- (PostgreSQL runs every *.sql in /docker-entrypoint-initdb.d on init).
 
--- pgcrypto provides gen_random_uuid() for UUID primary keys.
--- This avoids needing the uuid-ossp extension or application-layer UUID generation.
+-- gen_random_uuid() is built-in since PostgreSQL 13. The pgcrypto extension
+-- is loaded as a safety net for PostgreSQL 12 and earlier only.
+-- noinspection SqlUnresolvedReference @ whole-file
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ── organizations ─────────────────────────────────────────────────────────────

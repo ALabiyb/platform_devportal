@@ -21,13 +21,14 @@
 //  1. JSON structured logging (Loki/Grafana-compatible)
 //  2. Config loaded from environment variables (fails fast on missing secrets)
 //  3. PostgreSQL connection pool opened and verified with ping
-//  4. Session cleanup goroutine started (deletes expired sessions every hour)
-//  5. HTTP server started with graceful shutdown on SIGINT / SIGTERM
+//  4. Auth provider initialised (OIDC discovery or GitLab OAuth endpoint)
+//  5. Session cleanup goroutine started (deletes expired sessions every hour)
+//  6. HTTP server started with graceful shutdown on SIGINT / SIGTERM
 package main
 
 import (
 	"context"
-	"fmt"
+	"crypto/tls"
 	"log/slog"
 	"net/http"
 	"os"
@@ -35,8 +36,10 @@ import (
 	"syscall"
 	"time"
 
+	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
 	"github.com/ALabiyb/platform_devportal/internal/config"
 	"github.com/ALabiyb/platform_devportal/internal/db"
+	"github.com/ALabiyb/platform_devportal/internal/handler"
 )
 
 // version is set at build time via -ldflags="-X main.version=<git-tag>".
@@ -45,18 +48,15 @@ var version = "dev"
 
 func main() {
 	// JSON structured logging so Loki and Grafana can index log fields
-	// (level, msg, err, etc.) without any parsing configuration.
+	// without any parsing configuration.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	slog.Info("devportal starting", "version", version)
 
 	// Load all configuration from environment variables.
-	// mustEnv() inside Load() calls os.Exit(1) for any missing required var,
-	// so this is the only place startup can fail before the server starts.
+	// mustEnv() inside Load() calls os.Exit(1) for any missing required var.
 	cfg := config.Load()
 
 	// Open the PostgreSQL connection pool.
-	// The context here is just for the initial dial — the pool itself lives
-	// for the process lifetime and is closed during graceful shutdown.
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer dbCancel()
 
@@ -67,34 +67,37 @@ func main() {
 	}
 	slog.Info("database connected", "host", cfg.DBHost, "name", cfg.DBName)
 
-	// Start the session cleanup goroutine.
-	// Runs every hour and deletes expired session rows so the sessions table
-	// does not grow unbounded. Stops when cleanupCancel() is called below.
+	// Shared HTTP client used for all outbound calls (Keycloak, GitLab, Jenkins, etc.).
+	// TLS_SKIP_VERIFY=true allows self-signed certs in local dev — set false in prod.
+	httpClient := newHTTPClient(cfg.TLSSkipVerify)
+
+	// Initialise the auth handler based on AUTH_MODE.
+	// OIDC: performs a discovery request to Keycloak at startup — fails fast.
+	// Local: no network call; user accounts are stored in devportal's DB.
+	authHandler, err := buildAuthHandler(cfg, httpClient, database)
+	if err != nil {
+		slog.Error("failed to initialise auth", "mode", cfg.AuthMode, "err", err)
+		os.Exit(1)
+	}
+	slog.Info("auth ready", "mode", cfg.AuthMode)
+
+	// Session cleanup goroutine — deletes expired rows from sessions table once per hour.
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	go runSessionCleanup(cleanupCtx, database)
 
-	// Build the HTTP handler.
-	// Day 04 replaces this minimal mux with the full chi router, RBAC
-	// middleware, rate limiter, structured request logger, and all routes.
-	mux := buildRouter(cfg, database)
+	// Wire up the full chi router with all middleware and routes.
+	h := handler.New(database, cfg, authHandler, version)
 
-	// HTTP server with explicit timeouts to prevent slow-client resource exhaustion.
+	// HTTP server with explicit timeouts.
+	// WriteTimeout is 60s to accommodate SSE streams that keep connections open.
 	srv := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: mux,
-
-		// ReadTimeout: maximum time to read the entire incoming request body.
-		ReadTimeout: 15 * time.Second,
-
-		// WriteTimeout: 60s to accommodate SSE provisioning streams, which keep
-		// the connection open while broadcasting step-by-step progress to the browser.
+		Addr:         cfg.HTTPAddr,
+		Handler:      h.Routes(),
+		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
-
-		// IdleTimeout: maximum time an idle keep-alive connection is held open.
-		IdleTimeout: 120 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
-	// Run the server in a goroutine so the main goroutine can block on OS signals.
 	go func() {
 		slog.Info("HTTP server listening", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -103,16 +106,14 @@ func main() {
 		}
 	}()
 
-	// Block until the OS delivers SIGINT (Ctrl+C) or SIGTERM (kubectl delete pod).
+	// Block until SIGINT (Ctrl+C) or SIGTERM (kubectl delete pod).
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
-	slog.Info("shutdown signal received — draining in-flight requests", "signal", sig.String())
+	slog.Info("shutdown signal received", "signal", sig.String())
 
-	// Stop the session cleanup goroutine before shutting down the HTTP server.
 	cleanupCancel()
 
-	// Allow up to 30 seconds for in-flight requests to finish before forcing close.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
@@ -120,52 +121,49 @@ func main() {
 		slog.Error("forced shutdown after timeout", "err", err)
 	}
 
-	// Close the DB pool after the HTTP server has drained so no in-flight
-	// handler loses its DB connection mid-query.
 	database.Close()
 	slog.Info("devportal stopped cleanly")
 }
 
-// buildRouter wires together all HTTP routes and middleware.
-// Day 04 expands this into the full chi router with RBAC, rate limiting,
-// and structured request logging. For now it registers the health endpoint only.
-func buildRouter(cfg *config.Config, database *db.DB) http.Handler {
-	mux := http.NewServeMux()
-
-	// /healthz — always public, never gated by auth.
-	// Traefik uses this as a liveness probe; Gatus for uptime monitoring.
-	mux.HandleFunc("/healthz", handleHealthz(database))
-
-	_ = cfg // used fully in Day 04
-	return mux
+// buildAuthHandler initialises the correct auth handler based on AUTH_MODE.
+// local: no network call — user accounts live in devportal's own DB.
+// oidc:  performs OIDC discovery against Keycloak at startup (fails fast on error).
+func buildAuthHandler(cfg *config.Config, httpClient *http.Client, database *db.DB) (*authpkg.Handler, error) {
+	switch cfg.AuthMode {
+	case "local":
+		local := authpkg.NewLocalProvider(database, cfg)
+		return authpkg.NewHandler(nil, local, database, cfg), nil
+	case "oidc":
+		provider, err := authpkg.NewOIDCProvider(context.Background(), cfg, httpClient)
+		if err != nil {
+			return nil, err
+		}
+		return authpkg.NewHandler(provider, nil, database, cfg), nil
+	default:
+		slog.Error("unknown AUTH_MODE — must be 'local' or 'oidc'", "mode", cfg.AuthMode)
+		os.Exit(1)
+		return nil, nil // unreachable
+	}
 }
 
-// handleHealthz responds with a JSON status payload including a DB ping.
-// Returns 503 if the database is unreachable so load balancers can route away.
-func handleHealthz(database *db.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		dbStatus := "ok"
-		if err := database.Ping(r.Context()); err != nil {
-			dbStatus = "unreachable"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if dbStatus != "ok" {
-			w.WriteHeader(http.StatusServiceUnavailable)
-		} else {
-			w.WriteHeader(http.StatusOK)
-		}
-		fmt.Fprintf(w, `{"status":%q,"db":%q,"service":"devportal","version":%q}`,
-			dbStatus, dbStatus, version,
-		)
+// newHTTPClient returns an *http.Client with a 30-second timeout.
+// When skipVerify is true, TLS certificate validation is disabled for
+// outbound calls — needed when Jenkins/Harbor/ArgoCD use self-signed certs.
+func newHTTPClient(skipVerify bool) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if skipVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
 	}
 }
 
 // runSessionCleanup deletes expired session rows from PostgreSQL once per hour.
-// It runs for the lifetime of the process and exits when ctx is cancelled.
 func runSessionCleanup(ctx context.Context, database *db.DB) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():

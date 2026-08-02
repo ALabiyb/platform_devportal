@@ -3,18 +3,22 @@
 // Contact: saidlabiybm@gmail.com
 // ---------------------------------------------------------------------------
 
-// handlers.go wires the OAuth 2.0 / OIDC login flow to HTTP endpoints.
+// handlers.go wires auth flows to HTTP endpoints.
 //
-// Mount these with a chi router:
+// Two modes — routes registered differ per AUTH_MODE:
 //
-//	h := auth.NewHandler(provider, database, cfg)
-//	r.Get("/auth/login",    h.HandleLogin)
-//	r.Get("/auth/callback", h.HandleCallback)
-//	r.Post("/auth/logout",  h.HandleLogout)
-//	r.Get("/auth/me",       h.HandleMe)   // requires RequireAuth middleware
+//	OIDC mode:
+//	  GET  /auth/login    → redirect to Keycloak (HandleLogin)
+//	  GET  /auth/callback → exchange code for session (HandleCallback)
 //
-// State and nonce are stored in short-lived cookies (5-minute TTL, HttpOnly,
-// SameSite=Lax) and verified in HandleCallback to prevent CSRF and token replay.
+//	Local mode:
+//	  POST /auth/login    → validate email+password, create session (HandleLocalLogin)
+//	  POST /auth/register → create first admin account (HandleLocalRegister)
+//	  POST /api/v1/users  → admin creates additional accounts (wired in handler pkg)
+//
+//	Both modes:
+//	  POST /auth/logout   → delete session (HandleLogout)
+//	  GET  /auth/me       → current user info (HandleMe)
 
 package auth
 
@@ -22,6 +26,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -31,119 +36,264 @@ import (
 	"github.com/ALabiyb/platform_devportal/internal/db"
 )
 
-// Handler holds the dependencies needed by the auth HTTP handlers.
-// Create one with NewHandler and share it for the lifetime of the process.
+// Handler holds the dependencies for all auth HTTP endpoints.
+// Exactly one of oidcProvider or localProvider is non-nil, matching AUTH_MODE.
 type Handler struct {
-	provider AuthProvider
-	database *db.DB
-	cfg      *config.Config
+	oidcProvider  AuthProvider   // non-nil when AUTH_MODE=oidc
+	localProvider *LocalProvider // non-nil when AUTH_MODE=local
+	database      *db.DB
+	cfg           *config.Config
 }
 
-// NewHandler constructs an auth Handler.
-func NewHandler(provider AuthProvider, database *db.DB, cfg *config.Config) *Handler {
-	return &Handler{
-		provider: provider,
-		database: database,
-		cfg:      cfg,
-	}
+// NewOIDCHandler creates a Handler wired for Keycloak OIDC auth.
+func NewOIDCHandler(provider AuthProvider, database *db.DB, cfg *config.Config) *Handler {
+	return &Handler{oidcProvider: provider, database: database, cfg: cfg}
 }
 
-// HandleLogin starts the OAuth / OIDC login flow.
-//
-// It generates a cryptographically random state token (CSRF protection) and a
-// nonce (OIDC replay protection), stores both in short-lived HttpOnly cookies,
-// then redirects the browser to the identity provider's login page.
-//
-// GET /auth/login
+// NewLocalHandler creates a Handler wired for local username/password auth.
+func NewLocalHandler(provider *LocalProvider, database *db.DB, cfg *config.Config) *Handler {
+	return &Handler{localProvider: provider, database: database, cfg: cfg}
+}
+
+// NewHandler is a convenience constructor that picks the right handler type from cfg.
+// Pass the OIDC provider when AUTH_MODE=oidc, or the local provider when AUTH_MODE=local.
+// Exactly one of oidc/local must be non-nil.
+func NewHandler(oidc AuthProvider, local *LocalProvider, database *db.DB, cfg *config.Config) *Handler {
+	return &Handler{oidcProvider: oidc, localProvider: local, database: database, cfg: cfg}
+}
+
+// ── OIDC handlers ─────────────────────────────────────────────────────────────
+
+// HandleLogin starts the OIDC login flow — generates state + nonce cookies,
+// then redirects the browser to the Keycloak login page.
+// GET /auth/login  (OIDC mode only)
 func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	state, err := randomToken()
 	if err != nil {
-		http.Error(w, "failed to generate state token", http.StatusInternalServerError)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	nonce, err := randomToken()
 	if err != nil {
-		http.Error(w, "failed to generate nonce", http.StatusInternalServerError)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	// Short-lived cookies (5 min) — long enough for a human to complete login,
-	// short enough to limit the CSRF window.
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_state",
-		Value:    state,
-		Path:     "/auth/callback",
-		MaxAge:   300,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_nonce",
-		Value:    nonce,
-		Path:     "/auth/callback",
-		MaxAge:   300,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	http.Redirect(w, r, h.provider.AuthURL(state, nonce), http.StatusFound)
+	http.SetCookie(w, shortCookie("auth_state", state))
+	http.SetCookie(w, shortCookie("auth_nonce", nonce))
+	http.Redirect(w, r, h.oidcProvider.AuthURL(state, nonce), http.StatusFound)
 }
 
-// HandleCallback handles the redirect back from the identity provider.
-//
-// Flow:
-//  1. Read and validate the state cookie (CSRF check)
-//  2. Read the nonce cookie (OIDC replay check)
-//  3. Exchange the authorization code for user Claims
-//  4. Upsert the org and user in the database
-//  5. Create a new DB-backed session
-//  6. Set the session cookie and redirect to /
-//
-// GET /auth/callback?code=…&state=…
+// HandleCallback handles the Keycloak redirect back after login.
+// Verifies state (CSRF), exchanges code for Claims, upserts user + session.
+// GET /auth/callback  (OIDC mode only)
 func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
-	// ── CSRF check ────────────────────────────────────────────────────────────
 	stateCookie, err := r.Cookie("auth_state")
-	if err != nil || stateCookie.Value == "" {
-		http.Error(w, "missing state cookie — possible CSRF", http.StatusBadRequest)
+	if err != nil || stateCookie.Value == "" || r.URL.Query().Get("state") != stateCookie.Value {
+		http.Error(w, "state mismatch — possible CSRF", http.StatusBadRequest)
 		return
 	}
-	if r.URL.Query().Get("state") != stateCookie.Value {
-		http.Error(w, "state mismatch — possible CSRF attack", http.StatusBadRequest)
-		return
-	}
-
 	nonceCookie, err := r.Cookie("auth_nonce")
 	if err != nil || nonceCookie.Value == "" {
 		http.Error(w, "missing nonce cookie", http.StatusBadRequest)
 		return
 	}
 
-	// ── Exchange the code ─────────────────────────────────────────────────────
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		// The identity provider may send an "error" parameter on failure.
-		if errParam := r.URL.Query().Get("error"); errParam != "" {
-			http.Error(w, "provider error: "+errParam, http.StatusBadRequest)
+		if e := r.URL.Query().Get("error"); e != "" {
+			http.Error(w, "provider error: "+e, http.StatusBadRequest)
 			return
 		}
 		http.Error(w, "missing authorization code", http.StatusBadRequest)
 		return
 	}
 
-	claims, err := h.provider.Exchange(r.Context(), code, nonceCookie.Value)
+	claims, err := h.oidcProvider.Exchange(r.Context(), code, nonceCookie.Value)
 	if err != nil {
 		http.Error(w, "authentication failed: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	// ── Upsert org and user ───────────────────────────────────────────────────
-	org, err := h.database.EnsureOrg(r.Context(), h.cfg.OrgName, h.cfg.OrgSlug)
-	if err != nil {
-		http.Error(w, "failed to initialise organisation", http.StatusInternalServerError)
+	role := RoleFromClaims(claims, h.cfg.OIDCAdminGroup, h.cfg.OIDCDeveloperGroup, h.cfg.AdminEmail)
+	if err := h.finishLogin(w, r, claims, role); err != nil {
+		http.Error(w, "login failed", http.StatusInternalServerError)
 		return
 	}
 
-	role := RoleFromClaims(claims, h.cfg.OIDCAdminGroup, h.cfg.OIDCDeveloperGroup, h.cfg.AdminEmail)
+	// Clear the short-lived CSRF cookies.
+	http.SetCookie(w, expireCookie("auth_state", "/auth/callback"))
+	http.SetCookie(w, expireCookie("auth_nonce", "/auth/callback"))
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// ── Local auth handlers ────────────────────────────────────────────────────────
+
+// HandleLocalLogin validates email + password and creates a session.
+// POST /auth/login  (local mode only)
+func (h *Handler) HandleLocalLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		jsonError(w, "email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	claims, err := h.localProvider.Authenticate(r.Context(), req.Email, req.Password)
+	if err != nil {
+		if errors.Is(err, ErrAccountDisabled) {
+			jsonError(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		// Always return the same message for wrong email/password to prevent enumeration.
+		jsonError(w, "invalid email or password", http.StatusUnauthorized)
+		return
+	}
+
+	// Fetch the stored role from the DB (local users have role in users table).
+	dbUser, err := h.database.GetLocalUserByEmail(r.Context(), req.Email)
+	if err != nil {
+		jsonError(w, "login failed", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.finishLogin(w, r, claims, dbUser.Role); err != nil {
+		jsonError(w, "login failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// HandleLocalRegister creates the first admin account.
+// Succeeds only when no users exist in the org yet (bootstrap only).
+// After that, only admins can create users (via POST /api/v1/users).
+// POST /auth/register  (local mode only)
+func (h *Handler) HandleLocalRegister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+		Password    string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Email == "" || req.DisplayName == "" || req.Password == "" {
+		jsonError(w, "email, display_name, and password are required", http.StatusBadRequest)
+		return
+	}
+
+	org, err := h.database.EnsureOrg(r.Context(), h.cfg.OrgName, h.cfg.OrgSlug)
+	if err != nil {
+		jsonError(w, "failed to initialise organisation", http.StatusInternalServerError)
+		return
+	}
+
+	// Bootstrap check: only allowed when the org has zero users.
+	count, err := h.database.CountUsers(r.Context(), org.ID)
+	if err != nil {
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if count > 0 {
+		jsonError(w, "registration is closed — ask your administrator to create an account", http.StatusForbidden)
+		return
+	}
+
+	// First user always gets admin.
+	user, err := h.localProvider.CreateUser(r.Context(), org.ID, req.Email, req.DisplayName, RoleAdmin, req.Password)
+	if err != nil {
+		jsonError(w, "failed to create account: "+err.Error(), http.StatusConflict)
+		return
+	}
+
+	claims := &Claims{
+		Sub:         user.ID.String(),
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		Provider:    "local",
+	}
+	if err := h.finishLogin(w, r, claims, RoleAdmin); err != nil {
+		jsonError(w, "account created but login failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "admin account created",
+		"email":  user.Email,
+	})
+}
+
+// ── Shared handlers ────────────────────────────────────────────────────────────
+
+// HandleLogout deletes the session from the DB and clears the cookie.
+// POST /auth/logout  (both modes)
+func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie("devportal_session"); err == nil && cookie.Value != "" {
+		_ = h.database.DeleteSession(r.Context(), cookie.Value)
+	}
+	http.SetCookie(w, expiredSessionCookie())
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
+}
+
+// HandleMe returns the authenticated user's profile as JSON.
+// GET /auth/me  (both modes, requires RequireAuth middleware)
+func (h *Handler) HandleMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := UserFromContext(r.Context())
+	if !ok {
+		writeUnauthorized(w, "not authenticated")
+		return
+	}
+	session, _ := SessionFromContext(r.Context())
+
+	type resp struct {
+		ID          string `json:"id"`
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+		Role        string `json:"role"`
+		Provider    string `json:"provider"`
+		IsActive    bool   `json:"is_active"`
+		ExpiresAt   string `json:"session_expires_at,omitempty"`
+	}
+
+	role := user.Role
+	expiresAt := ""
+	if session != nil {
+		role = session.Role
+		expiresAt = session.ExpiresAt.Format(time.RFC3339)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp{
+		ID:          user.ID.String(),
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		Role:        role,
+		Provider:    user.Provider,
+		IsActive:    user.IsActive,
+		ExpiresAt:   expiresAt,
+	})
+}
+
+// ── Internal helpers ───────────────────────────────────────────────────────────
+
+// finishLogin is shared by both OIDC callback and local login.
+// It upserts the org + user in the DB, creates a session, and sets the cookie.
+func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, claims *Claims, role string) error {
+	org, err := h.database.EnsureOrg(r.Context(), h.cfg.OrgName, h.cfg.OrgSlug)
+	if err != nil {
+		return err
+	}
 
 	user, err := h.database.UpsertUser(r.Context(), db.User{
 		OrgID:       org.ID,
@@ -151,102 +301,31 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		DisplayName: claims.DisplayName,
 		Provider:    claims.Provider,
 		ProviderID:  claims.Sub,
+		Role:        role,
 	})
 	if err != nil {
-		http.Error(w, "failed to upsert user", http.StatusInternalServerError)
-		return
+		return err
 	}
 
-	// ── Create session ────────────────────────────────────────────────────────
 	sessionID := uuid.New().String()
-	session := db.Session{
+	if err := h.database.CreateSession(r.Context(), db.Session{
 		ID:        sessionID,
 		UserID:    user.ID,
 		Role:      role,
 		ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
-	}
-	if err := h.database.CreateSession(r.Context(), session); err != nil {
-		http.Error(w, "failed to create session", http.StatusInternalServerError)
-		return
+	}); err != nil {
+		return err
 	}
 
-	// Clear the short-lived auth cookies — they're no longer needed.
-	http.SetCookie(w, &http.Cookie{Name: "auth_state", Value: "", Path: "/auth/callback", MaxAge: -1})
-	http.SetCookie(w, &http.Cookie{Name: "auth_nonce", Value: "", Path: "/auth/callback", MaxAge: -1})
-
-	// Set the long-lived session cookie (24 h, sliding — extended by RequireAuth).
 	http.SetCookie(w, &http.Cookie{
 		Name:     "devportal_session",
 		Value:    sessionID,
 		Path:     "/",
-		MaxAge:   86400, // 24 hours
+		MaxAge:   86400,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-
-	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-// HandleLogout ends the authenticated session.
-//
-// It deletes the session from the database (so the cookie can't be replayed
-// after logout) and clears the session cookie in the browser.
-//
-// POST /auth/logout
-func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("devportal_session")
-	if err == nil && cookie.Value != "" {
-		// Best-effort deletion — if the session is already gone (e.g. expired),
-		// we still clear the cookie and return 200.
-		_ = h.database.DeleteSession(r.Context(), cookie.Value)
-	}
-
-	http.SetCookie(w, expiredSessionCookie())
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
-}
-
-// HandleMe returns the authenticated user's profile as JSON.
-// Requires RequireAuth middleware — callers are guaranteed to have a valid session.
-//
-// GET /auth/me
-func (h *Handler) HandleMe(w http.ResponseWriter, r *http.Request) {
-	user, ok := UserFromContext(r.Context())
-	if !ok {
-		// Should never happen if RequireAuth is applied, but be defensive.
-		writeUnauthorized(w, "not authenticated")
-		return
-	}
-
-	session, _ := SessionFromContext(r.Context())
-
-	type meResponse struct {
-		ID          string `json:"id"`
-		Email       string `json:"email"`
-		DisplayName string `json:"display_name"`
-		Role        string `json:"role"`
-		Provider    string `json:"provider"`
-		ExpiresAt   string `json:"session_expires_at,omitempty"`
-	}
-
-	role := ""
-	if session != nil {
-		role = session.Role
-	}
-
-	resp := meResponse{
-		ID:          user.ID.String(),
-		Email:       user.Email,
-		DisplayName: user.DisplayName,
-		Role:        role,
-		Provider:    user.Provider,
-	}
-	if session != nil {
-		resp.ExpiresAt = session.ExpiresAt.Format(time.RFC3339)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	return nil
 }
 
 // randomToken generates a cryptographically random 32-byte URL-safe token.
@@ -256,4 +335,33 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// shortCookie creates a short-lived (5 min) HttpOnly cookie for CSRF state/nonce.
+func shortCookie(name, value string) *http.Cookie {
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/auth/callback",
+		MaxAge:   300,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
+// expireCookie immediately expires a cookie in the browser.
+func expireCookie(name, path string) *http.Cookie {
+	return &http.Cookie{Name: name, Value: "", Path: path, MaxAge: -1}
+}
+
+// expiredSessionCookie clears the session cookie in the browser.
+func expiredSessionCookie() *http.Cookie {
+	return &http.Cookie{Name: "devportal_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode}
+}
+
+// jsonError writes a JSON error response.
+func jsonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

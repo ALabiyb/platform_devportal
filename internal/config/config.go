@@ -42,9 +42,9 @@ type Config struct {
 	DBSSLMode  string // Env: DB_SSL_MODE  · Default: disable
 
 	// ── Auth Mode ────────────────────────────────────────────────────────────
-	// "oidc"   → Keycloak OIDC (primary — recommended for production)
-	// "gitlab" → GitLab OAuth fallback (personal deployments without Keycloak)
-	// Env: AUTH_MODE · Default: oidc
+	// "local" → built-in username/password (devportal manages accounts, no IdP)
+	// "oidc"  → Keycloak OIDC (recommended for production, SSO, AD/LDAP federation)
+	// Env: AUTH_MODE · Default: local
 	AuthMode string
 
 	// ── OIDC / Keycloak ──────────────────────────────────────────────────────
@@ -62,13 +62,10 @@ type Config struct {
 	OIDCDeveloperGroup string // Env: OIDC_DEVELOPER_GROUP  · Default: devportal-developers
 
 	// ── GitLab / Gitea ───────────────────────────────────────────────────────
-	// Works with GitLab CE/EE and Gitea. Set GITLAB_URL to your instance.
-	// Used for OAuth fallback (when mode=gitlab) and all Git API calls.
-	GitLabURL               string // Env: GITLAB_URL                · REQUIRED
-	GitLabOAuthClientID     string // Env: GITLAB_OAUTH_CLIENT_ID    · REQUIRED when mode=gitlab
-	GitLabOAuthClientSecret string // Env: GITLAB_OAUTH_CLIENT_SECRET· REQUIRED when mode=gitlab
-	GitLabOAuthRedirectURL  string // Env: GITLAB_OAUTH_REDIRECT_URL · REQUIRED when mode=gitlab
-	GitLabToken             string // Env: GITLAB_TOKEN              · REQUIRED (PAT scope: api)
+	// API client for Git operations (create repo, commit files, webhooks).
+	// Auth is handled separately (local or OIDC) — these are not OAuth fields.
+	GitLabURL   string // Env: GITLAB_URL   · REQUIRED
+	GitLabToken string // Env: GITLAB_TOKEN · REQUIRED (PAT scope: api)
 
 	// ── Organisation ─────────────────────────────────────────────────────────
 	// In v0.1 devportal has a single org created on first login.
@@ -155,7 +152,7 @@ func Load() *Config {
 		DBPassword: mustEnv("DB_PASSWORD"),
 		DBSSLMode:  env("DB_SSL_MODE", "disable"),
 
-		AuthMode: env("AUTH_MODE", "oidc"),
+		AuthMode: env("AUTH_MODE", "local"),
 
 		// OIDC — no URL defaults, all deployment-specific
 		OIDCIssuerURL:      env("OIDC_ISSUER_URL", ""),
@@ -165,12 +162,9 @@ func Load() *Config {
 		OIDCAdminGroup:     env("OIDC_ADMIN_GROUP", "devportal-admins"),
 		OIDCDeveloperGroup: env("OIDC_DEVELOPER_GROUP", "devportal-developers"),
 
-		// GitLab — no IP defaults, set GITLAB_URL to your instance
-		GitLabURL:               mustEnv("GITLAB_URL"),
-		GitLabOAuthClientID:     env("GITLAB_OAUTH_CLIENT_ID", ""),
-		GitLabOAuthClientSecret: env("GITLAB_OAUTH_CLIENT_SECRET", ""),
-		GitLabOAuthRedirectURL:  env("GITLAB_OAUTH_REDIRECT_URL", ""),
-		GitLabToken:             mustEnv("GITLAB_TOKEN"),
+		// GitLab — API access only, no OAuth
+		GitLabURL:   mustEnv("GITLAB_URL"),
+		GitLabToken: mustEnv("GITLAB_TOKEN"),
 
 		OrgName: env("ORG_NAME", "My Organization"),
 		OrgSlug: env("ORG_SLUG", "default"),

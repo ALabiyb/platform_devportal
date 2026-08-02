@@ -32,19 +32,21 @@ type Organization struct {
 }
 
 // User is every person who has authenticated into devportal at least once.
-// devportal does NOT manage passwords — Keycloak or GitLab owns all credentials.
-// We only store what the identity provider returned at login.
+// For OIDC users, devportal does NOT manage passwords — Keycloak owns credentials.
+// For local-auth users, password_hash holds the bcrypt hash.
 type User struct {
 	ID          uuid.UUID `db:"id"`
 	OrgID       uuid.UUID `db:"org_id"`
 	Email       string    `db:"email"`
 	DisplayName string    `db:"display_name"`
-	// Provider is the auth backend that created this record: "oidc" or "gitlab".
+	// Provider: "oidc" (Keycloak) or "local" (built-in password auth).
 	Provider string `db:"provider"`
-	// ProviderID is the stable unique identifier from the identity provider:
-	// the Keycloak "sub" claim or GitLab numeric user ID.
-	ProviderID string    `db:"provider_id"`
-	CreatedAt  time.Time `db:"created_at"`
+	// ProviderID: Keycloak "sub" claim for OIDC, or email for local users.
+	ProviderID   string  `db:"provider_id"`
+	Role         string  `db:"role"`         // "admin" | "developer" | "viewer"
+	PasswordHash *string `db:"password_hash"` // nil for OIDC users
+	IsActive     bool    `db:"is_active"`
+	CreatedAt    time.Time `db:"created_at"`
 }
 
 // Session is a DB-backed login session.
