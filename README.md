@@ -25,20 +25,26 @@ No manual steps. No tickets to DevOps. No waiting.
 
 ## Architecture
 
+> **[View full interactive diagram on Eraser →](https://app.eraser.io/workspace/MmusQUEPRU3zvC8sMpsk?diagram=ZX1_s6-X_tAb-sN2gvsR&layout=canvas)**
+>
+> The diagram covers all five flows: Auth (local bcrypt + OIDC), Provisioning Orchestrator (15 steps), CI/CD Pipeline, GitOps Promotion, and App Runtime.
+
 ```
 Developer (Browser)
     │
     ▼
 DevPortal (Go · chi · pgx · go-oidc)
     │
-    ├── Auth ──────────► Keycloak (OIDC) · GitLab OAuth (fallback)
+    ├── Auth ──────────► LOCAL  : POST /auth/login → bcrypt verify → DB session
+    │                    OIDC   : Keycloak SSO → id_token → groups → RBAC role
+    │                    (AUTH_MODE env var selects the active mode)
     │
     ├── Provisioning ──► GitLab · Jenkins · Harbor · DefectDojo · ArgoCD
-    │                    DB Provisioner (CREATE DATABASE per env)
+    │    (15 steps)      DB Provisioner (CREATE DATABASE per env)
     │
-    ├── SSE Hub ───────► Live step-by-step progress to browser
+    ├── SSE Hub ───────► Live step-by-step progress streamed to browser
     │
-    └── Database ──────► PostgreSQL 16 (own DB) + pgbouncer
+    └── Database ──────► PostgreSQL 16 (own DB)
                          Stores: projects · sessions · audit log · encrypted creds
 
 K8s Namespaces (dev / uat / prod)
@@ -60,8 +66,8 @@ K8s Namespaces (dev / uat / prod)
 | Registry | Harbor | Day 07 |
 | Security | DefectDojo | Day 07 |
 | GitOps | ArgoCD | Day 08 |
-| Auth | Keycloak (OIDC) | Day 03 |
-| Auth | GitLab OAuth | Day 03 |
+| Auth | Local (bcrypt, built-in) | Day 03 |
+| Auth | Keycloak (OIDC / SSO) | Day 03 |
 | Database | PostgreSQL | Day 08 |
 
 ---
