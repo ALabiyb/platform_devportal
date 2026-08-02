@@ -175,7 +175,7 @@ helm upgrade --install devportal ./helm/devportal \
 | Day | Deliverable | Status |
 |---|---|---|
 | Day 01 | Project scaffold — Go module, config, HTTP server, Dockerfile, migrations | ✅ |
-| Day 02 | Database layer — pgx pool, typed query helpers for all 10 tables | 🔄 |
+| Day 02 | Database layer — pgx pool, typed query helpers for all 10 tables | ✅ |
 | Day 03 | Auth — OIDC (Keycloak), GitLab OAuth fallback, DB-backed sessions | ⬜ |
 | Day 04 | HTTP router — chi, RBAC middleware, rate limiter, all routes | ⬜ |
 | Day 05 | Plugin interfaces + GitLab adapter | ⬜ |

@@ -3,7 +3,7 @@
 // Contact: saidlabiybm@gmail.com
 // ---------------------------------------------------------------------------
 
-// devportal is an Internal Developer Platform (IDP) for SoftNet.
+// devportal is an Internal Developer Platform (IDP) built by NexBridge Technologies.
 //
 // A developer fills one form and gets a complete, production-ready project
 // provisioned end-to-end — automatically and in real time:
@@ -17,13 +17,12 @@
 //	7.  PostgreSQL database provisioned per environment
 //	8.  SSE broadcast stream so every watcher sees live step progress
 //
-// This file is the entry point. It:
-//   - Sets up structured JSON logging (Loki/Grafana-compatible)
-//   - Loads all config from environment variables (fails fast if secrets missing)
-//   - Starts the HTTP server with graceful shutdown on SIGINT / SIGTERM
-//
-// The router, middleware, and all route handlers are wired in Day 04.
-// The DB connection pool is opened in Day 02.
+// Startup sequence:
+//  1. JSON structured logging (Loki/Grafana-compatible)
+//  2. Config loaded from environment variables (fails fast on missing secrets)
+//  3. PostgreSQL connection pool opened and verified with ping
+//  4. Session cleanup goroutine started (deletes expired sessions every hour)
+//  5. HTTP server started with graceful shutdown on SIGINT / SIGTERM
 package main
 
 import (
@@ -37,6 +36,7 @@ import (
 	"time"
 
 	"github.com/ALabiyb/platform_devportal/internal/config"
+	"github.com/ALabiyb/platform_devportal/internal/db"
 )
 
 // version is set at build time via -ldflags="-X main.version=<git-tag>".
@@ -47,7 +47,6 @@ func main() {
 	// JSON structured logging so Loki and Grafana can index log fields
 	// (level, msg, err, etc.) without any parsing configuration.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-
 	slog.Info("devportal starting", "version", version)
 
 	// Load all configuration from environment variables.
@@ -55,27 +54,43 @@ func main() {
 	// so this is the only place startup can fail before the server starts.
 	cfg := config.Load()
 
+	// Open the PostgreSQL connection pool.
+	// The context here is just for the initial dial — the pool itself lives
+	// for the process lifetime and is closed during graceful shutdown.
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dbCancel()
+
+	database, err := db.Open(dbCtx, cfg)
+	if err != nil {
+		slog.Error("failed to connect to database", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("database connected", "host", cfg.DBHost, "name", cfg.DBName)
+
+	// Start the session cleanup goroutine.
+	// Runs every hour and deletes expired session rows so the sessions table
+	// does not grow unbounded. Stops when cleanupCancel() is called below.
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	go runSessionCleanup(cleanupCtx, database)
+
 	// Build the HTTP handler.
 	// Day 04 replaces this minimal mux with the full chi router, RBAC
 	// middleware, rate limiter, structured request logger, and all routes.
-	mux := buildRouter(cfg)
+	mux := buildRouter(cfg, database)
 
 	// HTTP server with explicit timeouts to prevent slow-client resource exhaustion.
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
 		Handler: mux,
 
-		// ReadTimeout: maximum time allowed to read the entire incoming request,
-		// including body. Prevents a slow sender from tying up a goroutine forever.
+		// ReadTimeout: maximum time to read the entire incoming request body.
 		ReadTimeout: 15 * time.Second,
 
-		// WriteTimeout: maximum time to write the entire response.
-		// Set to 60s to accommodate SSE provisioning streams, which keep the
-		// connection open while broadcasting step-by-step progress to the browser.
+		// WriteTimeout: 60s to accommodate SSE provisioning streams, which keep
+		// the connection open while broadcasting step-by-step progress to the browser.
 		WriteTimeout: 60 * time.Second,
 
 		// IdleTimeout: maximum time an idle keep-alive connection is held open.
-		// After this period the connection is closed, freeing the file descriptor.
 		IdleTimeout: 120 * time.Second,
 	}
 
@@ -88,47 +103,80 @@ func main() {
 		}
 	}()
 
-	// Block until the OS delivers SIGINT (Ctrl+C) or SIGTERM (kubectl delete pod / docker stop).
+	// Block until the OS delivers SIGINT (Ctrl+C) or SIGTERM (kubectl delete pod).
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	slog.Info("shutdown signal received — draining in-flight requests", "signal", sig.String())
 
-	// Allow up to 30 seconds for in-flight requests to finish before forcing close.
-	// SSE clients will see the connection drop and the frontend reconnects automatically.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Stop the session cleanup goroutine before shutting down the HTTP server.
+	cleanupCancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	// Allow up to 30 seconds for in-flight requests to finish before forcing close.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("forced shutdown after timeout", "err", err)
-		os.Exit(1)
 	}
 
+	// Close the DB pool after the HTTP server has drained so no in-flight
+	// handler loses its DB connection mid-query.
+	database.Close()
 	slog.Info("devportal stopped cleanly")
 }
 
 // buildRouter wires together all HTTP routes and middleware.
 // Day 04 expands this into the full chi router with RBAC, rate limiting,
 // and structured request logging. For now it registers the health endpoint only.
-func buildRouter(cfg *config.Config) http.Handler {
+func buildRouter(cfg *config.Config, database *db.DB) http.Handler {
 	mux := http.NewServeMux()
 
 	// /healthz — always public, never gated by auth.
-	// Traefik uses this as a liveness probe; Gatus uses it for uptime monitoring.
-	mux.HandleFunc("/healthz", handleHealthz)
+	// Traefik uses this as a liveness probe; Gatus for uptime monitoring.
+	mux.HandleFunc("/healthz", handleHealthz(database))
 
-	// Suppress the unused-variable warning for cfg until Day 04 uses it.
-	_ = fmt.Sprintf("%s", cfg.HTTPAddr)
-
+	_ = cfg // used fully in Day 04
 	return mux
 }
 
-// handleHealthz responds with a JSON status payload.
-// It intentionally does NOT check downstream services (DB, GitLab, Jenkins)
-// so that a probe never fails due to a dependency outage — those checks
-// belong in a separate /readyz endpoint added on Day 04.
-func handleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","service":"devportal","version":%q}`, version)
+// handleHealthz responds with a JSON status payload including a DB ping.
+// Returns 503 if the database is unreachable so load balancers can route away.
+func handleHealthz(database *db.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dbStatus := "ok"
+		if err := database.Ping(r.Context()); err != nil {
+			dbStatus = "unreachable"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if dbStatus != "ok" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		fmt.Fprintf(w, `{"status":%q,"db":%q,"service":"devportal","version":%q}`,
+			dbStatus, dbStatus, version,
+		)
+	}
+}
+
+// runSessionCleanup deletes expired session rows from PostgreSQL once per hour.
+// It runs for the lifetime of the process and exits when ctx is cancelled.
+func runSessionCleanup(ctx context.Context, database *db.DB) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := database.DeleteExpiredSessions(ctx)
+			if err != nil {
+				slog.Error("session cleanup failed", "err", err)
+			} else if n > 0 {
+				slog.Info("expired sessions deleted", "count", n)
+			}
+		}
+	}
 }
