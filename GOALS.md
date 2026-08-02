@@ -20,7 +20,7 @@
 | **Day 13** | **Project Form + SSE Progress View** — create-project wizard, live provisioning step stream UI | ⬜ |
 | **Day 14** | **Project List + Detail + Environment Status** — dashboard, per-environment status cards, ArgoCD sync state | ⬜ |
 | **Day 15** | **Credentials + Audit Log UI** — admin credential manager (encrypted at rest), audit event table | ⬜ |
-| **Day 16** | **Helm Chart** — full chart scaffold, `values.yaml` (personal vs SoftNet profiles), chart linting | ⬜ |
+| **Day 16** | **Helm Chart** — full chart scaffold, `values.yaml` (personal vs production profiles), chart linting | ⬜ |
 | **Day 17** | **K8s Manifests for DevPortal Itself** — namespace, deployment, service, ingress, HPA, configmap, secret | ⬜ |
 | **Day 18** | **CI/CD for DevPortal** — Jenkinsfile, GitLab webhook, Harbor project, first successful pipeline build | ⬜ |
 

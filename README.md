@@ -165,7 +165,7 @@ DevPortal ships as a Helm chart (Day 16):
 helm upgrade --install devportal ./helm/devportal \
   --namespace devportal \
   --create-namespace \
-  -f helm/devportal/values.softnet.yaml
+  -f helm/devportal/values.production.yaml
 ```
 
 ---

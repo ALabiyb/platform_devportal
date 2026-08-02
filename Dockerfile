@@ -40,9 +40,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 FROM gcr.io/distroless/static:nonroot AS final
 
 LABEL org.opencontainers.image.title="devportal"
-LABEL org.opencontainers.image.description="SoftNet Internal Developer Platform"
+LABEL org.opencontainers.image.description="NexBridge Technologies — Internal Developer Platform"
 LABEL org.opencontainers.image.authors="Labiyb M. Said <saidlabiybm@gmail.com>"
-LABEL org.opencontainers.image.source="https://gitlab.softnethq.co.tz/devportal/devportal"
+LABEL org.opencontainers.image.source="https://github.com/ALabiyb/platform_devportal"
 
 # CA certificates are needed so devportal can make outbound HTTPS calls to
 # GitLab, Jenkins, Harbor, DefectDojo, Keycloak, and ArgoCD.

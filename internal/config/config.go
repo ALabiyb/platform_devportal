@@ -6,12 +6,14 @@
 // Package config loads all runtime configuration from environment variables.
 //
 // Design rules:
-//   - Every value has a default where safe; only secrets MUST be set explicitly.
-//   - mustEnv() exits immediately with a clear error if a required var is missing,
-//     so the service fails at startup rather than crashing mid-request.
-//   - Config is populated once by Load() and then read-only for the process lifetime.
-//     Always pass *Config — never individual fields — so adding fields later
-//     does not require changing every call site.
+//   - No domain-specific defaults. Every URL that differs per deployment MUST
+//     be set via environment variable. Hardcoding a hostname here would mean
+//     a code change every time someone deploys to a different environment.
+//   - Safe structural defaults only: port numbers, DB names, role names, flags.
+//   - mustEnv() exits immediately on missing required vars so the service
+//     fails fast at startup rather than crashing mid-request.
+//   - Config is populated once by Load() and then read-only for the process
+//     lifetime. Always pass *Config — never individual fields.
 package config
 
 import (
@@ -20,143 +22,126 @@ import (
 )
 
 // Config holds every external-service URL and credential devportal needs.
+// All URL fields are intentionally empty by default — set them via environment
+// variables. Only structural values (ports, DB names, group names) have defaults.
 type Config struct {
 
 	// ── HTTP Server ──────────────────────────────────────────────────────────
-	// HTTPAddr is the TCP address the HTTP server binds to.
 	// Env: HTTP_ADDR · Default: :8080
 	HTTPAddr string
 
 	// ── DevPortal Database ───────────────────────────────────────────────────
-	// devportal uses its own PostgreSQL 16 instance (Bitnami Helm subchart in
-	// production, plain postgres:16-alpine in docker-compose for dev) to store:
-	//   - project registry (organizations, teams, projects, environments)
-	//   - DB-backed sessions (survives pod restarts, revocable)
-	//   - audit events (who did what and when)
-	//   - workspace credentials (encrypted with AES-256-GCM)
-	//   - provisioning steps (live status for the SSE stream)
-	// This database is separate from the PostgreSQL instances devportal
-	// provisions for developer applications.
+	// devportal's own PostgreSQL instance — separate from app databases.
+	// Stores: project registry, sessions, audit log, encrypted credentials,
+	// provisioning steps.
 	DBHost     string // Env: DB_HOST      · Default: localhost
 	DBPort     string // Env: DB_PORT      · Default: 5432
 	DBName     string // Env: DB_NAME      · Default: devportal
 	DBUser     string // Env: DB_USER      · Default: devportal
 	DBPassword string // Env: DB_PASSWORD  · REQUIRED
-	DBSSLMode  string // Env: DB_SSL_MODE  · Default: disable (use "require" in prod)
+	DBSSLMode  string // Env: DB_SSL_MODE  · Default: disable
 
 	// ── Auth Mode ────────────────────────────────────────────────────────────
-	// Controls which authentication backend is active.
-	//   "oidc"   → Keycloak OIDC (primary — used at SoftNet)
-	//   "gitlab" → GitLab OAuth fallback (personal deployments without Keycloak)
+	// "oidc"   → Keycloak OIDC (primary — recommended for production)
+	// "gitlab" → GitLab OAuth fallback (personal deployments without Keycloak)
 	// Env: AUTH_MODE · Default: oidc
 	AuthMode string
 
 	// ── OIDC / Keycloak ──────────────────────────────────────────────────────
-	// Used when AuthMode == "oidc". Keycloak is the SSO hub for SoftNet —
-	// it federates AD/LDAP, GitLab, GitHub, and Google accounts behind one
-	// login, and maps Keycloak group membership to devportal RBAC roles
-	// via the "groups" claim in the OIDC id_token.
-	OIDCIssuerURL    string // Env: OIDC_ISSUER_URL    · e.g. https://keycloak.softnethq.co.tz/realms/softnet
+	// Used when AuthMode == "oidc". Keycloak federates AD/LDAP, GitLab, GitHub,
+	// and Google accounts behind one login and maps group membership to RBAC roles.
+	// All URLs are REQUIRED and have no default — they differ per deployment.
+	OIDCIssuerURL    string // Env: OIDC_ISSUER_URL    · REQUIRED when mode=oidc  e.g. https://keycloak.example.com/realms/myorg
 	OIDCClientID     string // Env: OIDC_CLIENT_ID     · Default: devportal
 	OIDCClientSecret string // Env: OIDC_CLIENT_SECRET · REQUIRED when mode=oidc
-	OIDCRedirectURL  string // Env: OIDC_REDIRECT_URL  · e.g. https://devportal.devops.softnethq.co.tz/auth/callback
+	OIDCRedirectURL  string // Env: OIDC_REDIRECT_URL  · REQUIRED when mode=oidc  e.g. https://devportal.example.com/auth/callback
 
-	// Keycloak group names that map to devportal roles.
-	// Any user not in either group gets "viewer" (least-privilege default).
+	// Keycloak group names mapped to devportal roles.
+	// Users not in either group get "viewer" (least-privilege default).
 	OIDCAdminGroup     string // Env: OIDC_ADMIN_GROUP      · Default: devportal-admins
 	OIDCDeveloperGroup string // Env: OIDC_DEVELOPER_GROUP  · Default: devportal-developers
 
-	// ── GitLab OAuth Fallback ─────────────────────────────────────────────────
-	// Used when AuthMode == "gitlab". No Keycloak required.
-	// All GitLab users get the "developer" role by default.
-	// Users whose email matches AdminEmail get the "admin" role.
-	GitLabURL               string // Env: GITLAB_URL                · Default: http://192.168.15.85
+	// ── GitLab / Gitea ───────────────────────────────────────────────────────
+	// Works with GitLab CE/EE and Gitea. Set GITLAB_URL to your instance.
+	// Used for OAuth fallback (when mode=gitlab) and all Git API calls.
+	GitLabURL               string // Env: GITLAB_URL                · REQUIRED
 	GitLabOAuthClientID     string // Env: GITLAB_OAUTH_CLIENT_ID    · REQUIRED when mode=gitlab
 	GitLabOAuthClientSecret string // Env: GITLAB_OAUTH_CLIENT_SECRET· REQUIRED when mode=gitlab
-	GitLabOAuthRedirectURL  string // Env: GITLAB_OAUTH_REDIRECT_URL
-
-	// GitLabToken is the service-account Personal Access Token used for all
-	// GitLab API calls: list repos, commit Jenkinsfile/manifests, create webhooks.
-	// Required scope: api.
-	GitLabToken string // Env: GITLAB_TOKEN · REQUIRED
+	GitLabOAuthRedirectURL  string // Env: GITLAB_OAUTH_REDIRECT_URL · REQUIRED when mode=gitlab
+	GitLabToken             string // Env: GITLAB_TOKEN              · REQUIRED (PAT scope: api)
 
 	// ── Bootstrap Admin ──────────────────────────────────────────────────────
-	// Gives admin rights to a specific email regardless of group membership.
-	// Used to log in on a fresh install before Keycloak groups are configured.
-	// Remove from values.yaml after the first admin is set up in Keycloak.
+	// Grants admin rights to this email regardless of group membership.
+	// Used on a fresh install before OIDC groups are configured.
+	// Remove once groups are set up in Keycloak.
 	AdminEmail string // Env: ADMIN_EMAIL
 
 	// ── Jenkins ──────────────────────────────────────────────────────────────
-	JenkinsURL       string // Env: JENKINS_URL        · Default: http://192.168.200.78:8080
-	JenkinsPublicURL string // Env: JENKINS_PUBLIC_URL · Default: https://jenkins.devops.softnethq.co.tz
+	// JENKINS_URL:        internal API endpoint (used by devportal → Jenkins)
+	// JENKINS_PUBLIC_URL: public DNS hostname (used for GitLab webhooks and
+	//                     job links shown to developers — must be reachable
+	//                     from both the developer's browser and GitLab's server)
+	JenkinsURL       string // Env: JENKINS_URL        · REQUIRED
+	JenkinsPublicURL string // Env: JENKINS_PUBLIC_URL · REQUIRED
 	JenkinsUser      string // Env: JENKINS_USER       · Default: admin
 	JenkinsToken     string // Env: JENKINS_TOKEN      · REQUIRED
 
 	// ── Harbor ───────────────────────────────────────────────────────────────
-	HarborURL   string // Env: HARBOR_URL    · Default: https://harbor.devops.softnethq.co.tz
-	HarborUser  string // Env: HARBOR_USER   · Default: admin
-	HarborToken string // Env: HARBOR_TOKEN  · REQUIRED
+	HarborURL   string // Env: HARBOR_URL   · REQUIRED
+	HarborUser  string // Env: HARBOR_USER  · Default: admin
+	HarborToken string // Env: HARBOR_TOKEN · REQUIRED
 
 	// ── DefectDojo ───────────────────────────────────────────────────────────
-	DefectDojoURL   string // Env: DEFECTDOJO_URL   · Default: https://defectdojo.devops.softnethq.co.tz
+	DefectDojoURL   string // Env: DEFECTDOJO_URL   · REQUIRED
 	DefectDojoToken string // Env: DEFECTDOJO_TOKEN · REQUIRED
 
 	// ── ArgoCD ───────────────────────────────────────────────────────────────
-	ArgoCDURL      string // Env: ARGOCD_URL      · Default: https://argocd.devops.softnethq.co.tz
-	ArgoCDToken    string // Env: ARGOCD_TOKEN    · REQUIRED (generate: argocd account generate-token)
+	ArgoCDURL      string // Env: ARGOCD_URL      · REQUIRED
+	ArgoCDToken    string // Env: ARGOCD_TOKEN    · REQUIRED (argocd account generate-token)
 	ArgoCDInsecure bool   // Env: ARGOCD_INSECURE · Default: false
 
 	// ── App PostgreSQL (provisioned FOR developer apps) ───────────────────────
-	// devportal's DB provisioner connects to this instance with superuser
-	// credentials to run CREATE DATABASE / CREATE USER / GRANT for each new
-	// project environment. Completely separate from devportal's own DB above.
-	AppDBHost     string // Env: APP_DB_HOST           · Default: postgres.devops.svc.cluster.local
+	// devportal runs CREATE DATABASE / CREATE USER / GRANT against this instance.
+	// Completely separate from devportal's own database above.
+	AppDBHost     string // Env: APP_DB_HOST           · REQUIRED
 	AppDBPort     string // Env: APP_DB_PORT           · Default: 5432
 	AppDBUser     string // Env: APP_DB_ADMIN_USER     · Default: postgres
 	AppDBPassword string // Env: APP_DB_ADMIN_PASSWORD · REQUIRED
 
 	// ── Credential Encryption ─────────────────────────────────────────────────
-	// AES-256-GCM symmetric key used to encrypt all workspace credentials before
-	// storing them in the DB. Must be exactly 32 bytes, base64-encoded.
-	// Stored in a K8s Secret and mounted as an env var at runtime.
+	// AES-256-GCM key. Must be 32 bytes, base64-encoded.
 	// Generate: openssl rand -base64 32
 	EncryptionKey string // Env: ENCRYPTION_KEY · REQUIRED
 
-	// ── Jenkinsfile / K8s Manifest Defaults ──────────────────────────────────
-	// These values are baked into every generated Jenkinsfile so they never
-	// need to be changed per project — only the per-project values (name, repo,
-	// Harbor project) change.
-	RegistryURL           string // Env: REGISTRY_URL            · Default: harbor.devops.softnethq.co.tz
+	// ── Jenkinsfile / K8s Manifest values ────────────────────────────────────
+	// Baked into every generated Jenkinsfile and K8s manifest.
+	// Change once in .env — all future projects pick up the new value.
+	RegistryURL           string // Env: REGISTRY_URL            · REQUIRED  (hostname only, no https://)
 	RegistryCredentialsID string // Env: REGISTRY_CREDENTIALS_ID · Default: robot-jenkins
-	GitCredentialsID      string // Env: GIT_CREDENTIALS_ID      · Default: lsaid
-	SharedLibraryURL      string // Env: SHARED_LIBRARY_URL      · Default: http://192.168.15.85/devsecops1/pipeline.git
-	DependencyTrackURL    string // Env: DEPENDENCY_TRACK_URL    · Default: https://dependencytrack.devops.softnethq.co.tz
+	GitCredentialsID      string // Env: GIT_CREDENTIALS_ID      · REQUIRED  (Jenkins credential ID for Git)
+	SharedLibraryURL      string // Env: SHARED_LIBRARY_URL      · REQUIRED  (Git URL of Jenkins shared library)
+	DependencyTrackURL    string // Env: DEPENDENCY_TRACK_URL    · REQUIRED
 	K8sManifestGroup      string // Env: K8S_MANIFEST_GROUP      · Default: kubernetes-manifest
-	IngressBaseDomain     string // Env: INGRESS_BASE_DOMAIN     · Default: k8s.softnethq.co.tz
+	IngressBaseDomain     string // Env: INGRESS_BASE_DOMAIN     · REQUIRED  (base domain for app ingress URLs)
 
 	// ── Git Bot Commit Author ────────────────────────────────────────────────
-	// Used as the commit author when devportal pushes files to GitLab
-	// (Jenkinsfile, VERSION, Dockerfile, K8s manifests).
-	// When a developer is signed in via OIDC, their own name/email is used instead.
+	// Author on commits made by devportal (Jenkinsfile, manifests, VERSION).
 	BotName  string // Env: BOT_NAME  · Default: DevPortal Bot
-	BotEmail string // Env: BOT_EMAIL · Default: devportal@softnet.co.tz
+	BotEmail string // Env: BOT_EMAIL · REQUIRED
 
 	// ── TLS ──────────────────────────────────────────────────────────────────
-	// Skips TLS certificate validation for all outbound HTTP calls.
-	// Acceptable on the internal LAN where services use self-signed certs.
-	// Set TLS_SKIP_VERIFY=false once proper certificates are installed on
-	// GitLab, Jenkins, Harbor, DefectDojo, and ArgoCD.
+	// Skips certificate validation for outbound calls to Jenkins, Harbor, etc.
+	// Set TLS_SKIP_VERIFY=false once proper certs are installed.
 	TLSSkipVerify bool // Env: TLS_SKIP_VERIFY · Default: true
 }
 
 // Load reads all configuration from environment variables and returns a
-// populated *Config. It logs each non-secret value at INFO level and
-// calls os.Exit(1) if any required variable is missing, so the service
-// fails at startup with a clear error rather than crashing mid-request.
+// populated *Config. Calls os.Exit(1) on any missing required variable.
 func Load() *Config {
 	cfg := &Config{
 		HTTPAddr: env("HTTP_ADDR", ":8080"),
 
+		// DB — safe structural defaults, no domain-specific values
 		DBHost:     env("DB_HOST", "localhost"),
 		DBPort:     env("DB_PORT", "5432"),
 		DBName:     env("DB_NAME", "devportal"),
@@ -166,6 +151,7 @@ func Load() *Config {
 
 		AuthMode: env("AUTH_MODE", "oidc"),
 
+		// OIDC — no URL defaults, all deployment-specific
 		OIDCIssuerURL:      env("OIDC_ISSUER_URL", ""),
 		OIDCClientID:       env("OIDC_CLIENT_ID", "devportal"),
 		OIDCClientSecret:   env("OIDC_CLIENT_SECRET", ""),
@@ -173,7 +159,8 @@ func Load() *Config {
 		OIDCAdminGroup:     env("OIDC_ADMIN_GROUP", "devportal-admins"),
 		OIDCDeveloperGroup: env("OIDC_DEVELOPER_GROUP", "devportal-developers"),
 
-		GitLabURL:               env("GITLAB_URL", "http://192.168.15.85"),
+		// GitLab — no IP defaults, set GITLAB_URL to your instance
+		GitLabURL:               mustEnv("GITLAB_URL"),
 		GitLabOAuthClientID:     env("GITLAB_OAUTH_CLIENT_ID", ""),
 		GitLabOAuthClientSecret: env("GITLAB_OAUTH_CLIENT_SECRET", ""),
 		GitLabOAuthRedirectURL:  env("GITLAB_OAUTH_REDIRECT_URL", ""),
@@ -181,49 +168,55 @@ func Load() *Config {
 
 		AdminEmail: env("ADMIN_EMAIL", ""),
 
-		JenkinsURL:       env("JENKINS_URL", "http://192.168.200.78:8080"),
-		JenkinsPublicURL: env("JENKINS_PUBLIC_URL", "https://jenkins.devops.softnethq.co.tz"),
+		// Jenkins — no IP or domain defaults
+		JenkinsURL:       mustEnv("JENKINS_URL"),
+		JenkinsPublicURL: mustEnv("JENKINS_PUBLIC_URL"),
 		JenkinsUser:      env("JENKINS_USER", "admin"),
 		JenkinsToken:     mustEnv("JENKINS_TOKEN"),
 
-		HarborURL:   env("HARBOR_URL", "https://harbor.devops.softnethq.co.tz"),
+		// Harbor — no domain defaults
+		HarborURL:   mustEnv("HARBOR_URL"),
 		HarborUser:  env("HARBOR_USER", "admin"),
 		HarborToken: mustEnv("HARBOR_TOKEN"),
 
-		DefectDojoURL:   env("DEFECTDOJO_URL", "https://defectdojo.devops.softnethq.co.tz"),
+		// DefectDojo — no domain defaults
+		DefectDojoURL:   mustEnv("DEFECTDOJO_URL"),
 		DefectDojoToken: mustEnv("DEFECTDOJO_TOKEN"),
 
-		ArgoCDURL:      env("ARGOCD_URL", "https://argocd.devops.softnethq.co.tz"),
+		// ArgoCD — no domain defaults
+		ArgoCDURL:      mustEnv("ARGOCD_URL"),
 		ArgoCDToken:    mustEnv("ARGOCD_TOKEN"),
 		ArgoCDInsecure: env("ARGOCD_INSECURE", "false") != "false",
 
-		AppDBHost:     env("APP_DB_HOST", "postgres.devops.svc.cluster.local"),
+		// App DB — host is deployment-specific, no default
+		AppDBHost:     mustEnv("APP_DB_HOST"),
 		AppDBPort:     env("APP_DB_PORT", "5432"),
 		AppDBUser:     env("APP_DB_ADMIN_USER", "postgres"),
 		AppDBPassword: mustEnv("APP_DB_ADMIN_PASSWORD"),
 
 		EncryptionKey: mustEnv("ENCRYPTION_KEY"),
 
-		RegistryURL:           env("REGISTRY_URL", "harbor.devops.softnethq.co.tz"),
+		// Jenkinsfile / manifest defaults — all deployment-specific
+		RegistryURL:           mustEnv("REGISTRY_URL"),
 		RegistryCredentialsID: env("REGISTRY_CREDENTIALS_ID", "robot-jenkins"),
-		GitCredentialsID:      env("GIT_CREDENTIALS_ID", "lsaid"),
-		SharedLibraryURL:      env("SHARED_LIBRARY_URL", "http://192.168.15.85/devsecops1/pipeline.git"),
-		DependencyTrackURL:    env("DEPENDENCY_TRACK_URL", "https://dependencytrack.devops.softnethq.co.tz"),
+		GitCredentialsID:      mustEnv("GIT_CREDENTIALS_ID"),
+		SharedLibraryURL:      mustEnv("SHARED_LIBRARY_URL"),
+		DependencyTrackURL:    mustEnv("DEPENDENCY_TRACK_URL"),
 		K8sManifestGroup:      env("K8S_MANIFEST_GROUP", "kubernetes-manifest"),
-		IngressBaseDomain:     env("INGRESS_BASE_DOMAIN", "k8s.softnethq.co.tz"),
+		IngressBaseDomain:     mustEnv("INGRESS_BASE_DOMAIN"),
 
 		BotName:  env("BOT_NAME", "DevPortal Bot"),
-		BotEmail: env("BOT_EMAIL", "devportal@softnet.co.tz"),
+		BotEmail: mustEnv("BOT_EMAIL"),
 
 		TLSSkipVerify: env("TLS_SKIP_VERIFY", "true") != "false",
 	}
 
-	// Log the active configuration at startup (secrets are omitted).
 	slog.Info("config loaded",
 		"auth_mode", cfg.AuthMode,
 		"http_addr", cfg.HTTPAddr,
 		"db_host", cfg.DBHost,
 		"db_name", cfg.DBName,
+		"gitlab_url", cfg.GitLabURL,
 		"jenkins_url", cfg.JenkinsURL,
 		"harbor_url", cfg.HarborURL,
 		"defectdojo_url", cfg.DefectDojoURL,
@@ -244,8 +237,8 @@ func env(key, fallback string) string {
 }
 
 // mustEnv reads the environment variable named by key.
-// Exits with a clear error message if the variable is unset or empty,
-// because there is no safe default for secrets and required credentials.
+// Exits with a clear error if the variable is unset — no guessing at defaults
+// for values that are deployment-specific.
 func mustEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {

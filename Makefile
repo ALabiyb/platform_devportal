@@ -5,7 +5,9 @@
 
 BINARY  := devportal
 CMD     := ./cmd/devportal
-IMAGE   := harbor.devops.softnethq.co.tz/devportal/devportal
+# IMAGE must be set via environment variable or make argument — no domain hardcoded.
+# Usage: make docker-build IMAGE=harbor.example.com/devportal/devportal
+IMAGE   ?= $(shell echo $${REGISTRY_URL}/devportal/devportal)
 
 # VERSION is the git tag + commit SHA, e.g. "v0.1.0-abc1234".
 # Falls back to "dev" when git is not available.

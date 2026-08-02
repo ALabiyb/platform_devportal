@@ -17,12 +17,12 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ── organizations ─────────────────────────────────────────────────────────────
--- Top-level tenant boundary. In v0.1 SoftNet is a single org.
+-- Top-level tenant boundary. In v0.1 there is a single org.
 -- Multi-org support is the foundation for the future SaaS phase.
 CREATE TABLE organizations (
     id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     name       TEXT        NOT NULL,
-    slug       TEXT        NOT NULL UNIQUE, -- URL-safe name used in API paths, e.g. "softnet"
+    slug       TEXT        NOT NULL UNIQUE, -- URL-safe name used in API paths, e.g. "nexbridge"
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -153,7 +153,7 @@ CREATE TABLE environments (
     name           TEXT        NOT NULL,
     -- namespace is the K8s namespace, e.g. "payment-service-dev"
     namespace      TEXT        NOT NULL,
-    -- ingress_url is the public URL for this environment, e.g. "https://payment-service-dev.k8s.softnethq.co.tz"
+    -- ingress_url is the public URL for this environment, e.g. "https://payment-service-dev.apps.example.com"
     ingress_url    TEXT,
     -- argocd_app_name is the ArgoCD Application resource name, e.g. "payment-service-dev"
     argocd_app_name TEXT,

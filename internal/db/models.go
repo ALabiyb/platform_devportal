@@ -23,11 +23,11 @@ import (
 )
 
 // Organization is the top-level tenant boundary.
-// In v0.1 SoftNet is a single org. Multi-org support enables the future SaaS phase.
+// In v0.1 there is a single org. Multi-org support enables the future SaaS phase.
 type Organization struct {
 	ID        uuid.UUID `db:"id"`
 	Name      string    `db:"name"`
-	Slug      string    `db:"slug"` // URL-safe identifier used in API paths, e.g. "softnet"
+	Slug      string    `db:"slug"` // URL-safe identifier used in API paths, e.g. "nexbridge"
 	CreatedAt time.Time `db:"created_at"`
 }
 
