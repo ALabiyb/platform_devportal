@@ -1,0 +1,25 @@
+# Secrets — never commit these
+.env
+.env.local
+.env.*.local
+
+# Compiled binaries
+bin/
+*.exe
+*.test
+
+# Go module cache artifacts
+vendor/
+
+# Frontend build output (embedded into Go binary at build time)
+web/dist/
+web/node_modules/
+
+# IDE / editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store

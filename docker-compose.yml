@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------
+# Author: Labiyb M. Said — DevSecOps Engineer
+# Contact: saidlabiybm@gmail.com
+# ---------------------------------------------------------------------------
+#
+# LOCAL DEVELOPMENT ONLY — this file is never used in production.
+# Production runs the Helm chart (./helm/devportal/) on Kubernetes.
+# Changing values here has zero effect on any production or staging environment.
+#
+# This compose reuses the existing shared Docker infrastructure already
+# running on this machine (traefik-net network, postgres container, keycloak,
+# jenkins, gitea) so we don't spin up duplicate services.
+#
+# Shared services already running (do not recreate):
+#   postgres    — devportal creates its own DB inside this instance
+#   keycloak    — OIDC auth, add devportal client one time
+#   jenkins     — CI/CD adapter testing
+#   gitea       — Git provider adapter testing (replaces GitLab for local dev)
+#   traefik     — routes devportal.localhost → this container
+#   grafana     — observability
+#   pgadmin     — DB admin UI
+#
+# Quick start:
+#   cp .env.example .env        # fill in secrets
+#   docker exec postgres psql -U postgres -c "CREATE DATABASE devportal; CREATE USER devportal WITH PASSWORD 'changeme'; GRANT ALL ON DATABASE devportal TO devportal;"
+#   docker compose up -d
+#   open http://devportal.localhost
+
+services:
+
+  # ── DevPortal ──────────────────────────────────────────────────────────────
+  devportal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: devportal:dev
+    container_name: devportal
+    env_file: .env
+    environment:
+      # Point to the shared postgres container (already on traefik-net).
+      # In production this comes from K8s ConfigMap / Secret — not hardcoded.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    networks:
+      - traefik-net          # joins the shared network so it can reach postgres, keycloak, gitea, jenkins
+    labels:
+      # Traefik picks up these labels automatically and creates the routing rule.
+      # devportal.localhost resolves via your AdGuard Home or /etc/hosts.
+      - "traefik.enable=true"
+      - "traefik.http.routers.devportal.rule=Host(`devportal.localhost`)"
+      - "traefik.http.routers.devportal.entrypoints=web"
+      - "traefik.http.services.devportal.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+# Join the existing shared network — do NOT recreate it.
+# "external: true" means compose will fail loudly if traefik-net doesn't
+# exist yet, rather than silently creating a duplicate isolated network.
+networks:
+  traefik-net:
+    external: true
