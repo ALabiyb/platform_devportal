@@ -70,6 +70,12 @@ type Config struct {
 	GitLabOAuthRedirectURL  string // Env: GITLAB_OAUTH_REDIRECT_URL · REQUIRED when mode=gitlab
 	GitLabToken             string // Env: GITLAB_TOKEN              · REQUIRED (PAT scope: api)
 
+	// ── Organisation ─────────────────────────────────────────────────────────
+	// In v0.1 devportal has a single org created on first login.
+	// The slug is used in DB and API paths; the name is shown in the UI.
+	OrgName string // Env: ORG_NAME · Default: My Organization
+	OrgSlug string // Env: ORG_SLUG · Default: default
+
 	// ── Bootstrap Admin ──────────────────────────────────────────────────────
 	// Grants admin rights to this email regardless of group membership.
 	// Used on a fresh install before OIDC groups are configured.
@@ -165,6 +171,9 @@ func Load() *Config {
 		GitLabOAuthClientSecret: env("GITLAB_OAUTH_CLIENT_SECRET", ""),
 		GitLabOAuthRedirectURL:  env("GITLAB_OAUTH_REDIRECT_URL", ""),
 		GitLabToken:             mustEnv("GITLAB_TOKEN"),
+
+		OrgName: env("ORG_NAME", "My Organization"),
+		OrgSlug: env("ORG_SLUG", "default"),
 
 		AdminEmail: env("ADMIN_EMAIL", ""),
 
