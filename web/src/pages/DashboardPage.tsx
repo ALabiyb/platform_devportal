@@ -5,6 +5,7 @@ import { useProjects } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { FolderGit2 } from "lucide-react";
+import { useBrand } from "@/contexts/BrandContext";
 
 function statusVariant(status: string) {
   switch (status) {
@@ -17,13 +18,15 @@ function statusVariant(status: string) {
 
 export function DashboardPage() {
   const { data: projects, isLoading } = useProjects();
+  const brand = useBrand();
 
   return (
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Overview of your projects — NexBridge DevPortal
+          Overview of your projects
+          {brand.company ? ` — ${brand.company}` : ""}
         </p>
       </div>
 

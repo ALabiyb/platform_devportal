@@ -104,6 +104,7 @@ func (h *Handler) Routes() http.Handler {
 
 	// ── Public routes — no authentication required ─────────────────────────
 	r.Get("/healthz", h.handleHealthz)
+	r.Get("/branding.json", h.handleBranding)
 
 	switch h.cfg.AuthMode {
 	case "local":

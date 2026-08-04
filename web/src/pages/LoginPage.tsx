@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLocalLogin } from "@/lib/api";
+import { useBrand } from "@/contexts/BrandContext";
 import { useState } from "react";
 
 export function LoginPage() {
   const navigate = useNavigate();
   const login = useLocalLogin();
+  const brand = useBrand();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -25,8 +27,14 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-primary">DevPortal</h1>
-          <p className="mt-1 text-sm text-muted-foreground">NexBridge Technologies</p>
+          {brand.logo_url ? (
+            <img src={brand.logo_url} alt={brand.app_name} className="mx-auto mb-3 h-10 w-auto" />
+          ) : (
+            <h1 className="text-3xl font-bold tracking-tight text-primary">{brand.app_name}</h1>
+          )}
+          {brand.company && (
+            <p className="mt-1 text-sm text-muted-foreground">{brand.company}</p>
+          )}
         </div>
 
         <Card>

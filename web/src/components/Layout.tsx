@@ -3,6 +3,7 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { LayoutDashboard, FolderGit2, Users, LogOut } from "lucide-react";
 import { useLogout, useCurrentUser } from "@/lib/api";
+import { useBrand } from "@/contexts/BrandContext";
 import { Button } from "@/components/ui/button";
 
 const navItems = [
@@ -15,6 +16,7 @@ export function Layout() {
   const navigate = useNavigate();
   const { data: user } = useCurrentUser();
   const logout = useLogout();
+  const brand = useBrand();
 
   const handleLogout = async () => {
     await logout.mutateAsync();
@@ -25,10 +27,14 @@ export function Layout() {
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
       <aside className="flex w-60 flex-col border-r border-border bg-card">
-        <div className="flex h-14 items-center px-4 border-b border-border">
-          <span className="text-lg font-bold tracking-tight text-primary">
-            DevPortal
-          </span>
+        <div className="flex h-14 items-center px-4 border-b border-border gap-2">
+          {brand.logo_url ? (
+            <img src={brand.logo_url} alt={brand.app_name} className="h-7 w-auto" />
+          ) : (
+            <span className="text-lg font-bold tracking-tight text-primary">
+              {brand.app_name}
+            </span>
+          )}
         </div>
 
         <nav className="flex-1 space-y-1 p-2 pt-4">

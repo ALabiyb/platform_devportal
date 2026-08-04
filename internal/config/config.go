@@ -19,6 +19,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"strconv"
 )
 
 // Config holds every external-service URL and credential devportal needs.
@@ -136,6 +137,15 @@ type Config struct {
 	// Skips certificate validation for outbound calls to Jenkins, Harbor, etc.
 	// Set TLS_SKIP_VERIFY=false once proper certs are installed.
 	TLSSkipVerify bool // Env: TLS_SKIP_VERIFY · Default: true
+
+	// ── Branding ─────────────────────────────────────────────────────────────
+	// All optional. Change these per customer without touching code or rebuilding
+	// the image — the same Docker image ships to every org; branding is config.
+	// Served as JSON at GET /branding.json (public, cached 5 min).
+	BrandAppName    string // Env: BRAND_APP_NAME    · Default: DevPortal
+	BrandCompany    string // Env: BRAND_COMPANY     · Default: (empty)
+	BrandPrimaryHue int    // Env: BRAND_PRIMARY_HUE · Default: 199 (sky blue, 0-360)
+	BrandLogoURL    string // Env: BRAND_LOGO_URL    · Default: (empty, shows text logo)
 }
 
 // Load reads all configuration from environment variables and returns a
@@ -212,6 +222,11 @@ func Load() *Config {
 		BotEmail: mustEnv("BOT_EMAIL"),
 
 		TLSSkipVerify: env("TLS_SKIP_VERIFY", "true") != "false",
+
+		BrandAppName:    env("BRAND_APP_NAME", "DevPortal"),
+		BrandCompany:    env("BRAND_COMPANY", ""),
+		BrandPrimaryHue: envInt("BRAND_PRIMARY_HUE", 199),
+		BrandLogoURL:    env("BRAND_LOGO_URL", ""),
 	}
 
 	slog.Info("config loaded",
@@ -249,4 +264,18 @@ func mustEnv(key string) string {
 		os.Exit(1)
 	}
 	return v
+}
+
+// envInt reads the environment variable named by key and parses it as an int.
+// Returns fallback if the variable is unset, empty, or not a valid integer.
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }

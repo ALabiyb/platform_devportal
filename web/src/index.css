@@ -4,12 +4,17 @@
 
 @layer base {
   :root {
+    /* --brand-hue is the single knob for the primary colour palette.
+       JS sets this from /branding.json at boot — changing it shifts every
+       primary/ring token simultaneously. Default: 199 (sky blue). */
+    --brand-hue: 199;
+
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
     --card: 222.2 84% 4.9%;
     --card-foreground: 210 40% 98%;
-    --primary: 199 89% 48%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: var(--brand-hue) 89% 48%;
+    --primary-foreground: var(--brand-hue) 47.4% 11.2%;
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 17.5%;
@@ -20,7 +25,7 @@
     --destructive-foreground: 210 40% 98%;
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
-    --ring: 199 89% 48%;
+    --ring: var(--brand-hue) 89% 48%;
     --radius: 0.5rem;
   }
 }
