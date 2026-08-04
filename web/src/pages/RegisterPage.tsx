@@ -83,7 +83,7 @@ export function RegisterPage() {
     }
     setFieldErrors({});
     try {
-      await register.mutateAsync({ name: name.trim(), email, password });
+      await register.mutateAsync({ display_name: name.trim(), email, password });
       navigate("/", { replace: true });
     } catch {
       // error rendered below via register.error

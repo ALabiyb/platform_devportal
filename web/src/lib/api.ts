@@ -21,7 +21,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 export interface User {
   id: string;
   email: string;
-  name: string;
+  display_name: string;
   role: string;
 }
 
@@ -91,7 +91,7 @@ export function useLogout() {
 
 export function useRegister() {
   return useMutation({
-    mutationFn: (body: { name: string; email: string; password: string }) =>
+    mutationFn: (body: { display_name: string; email: string; password: string }) =>
       apiFetch<User>("/auth/register", {
         method: "POST",
         body: JSON.stringify(body),
