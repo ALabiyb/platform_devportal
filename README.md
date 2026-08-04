@@ -185,7 +185,7 @@ helm upgrade --install devportal ./helm/devportal \
 | Day 03 | Auth — OIDC (Keycloak), GitLab OAuth fallback, DB-backed sessions | ✅ |
 | Day 04 | HTTP router — chi, RBAC middleware, rate limiter, all routes | ✅ |
 | Day 05 | Plugin interfaces + GitLab adapter | ✅ |
-| Day 06 | Jenkins adapter | ⬜ |
+| Day 06 | Jenkins adapter | ✅ |
 | Day 07 | Harbor + DefectDojo adapters | ⬜ |
 | Day 08 | ArgoCD adapter + DB provisioner | ⬜ |
 | Day 09 | Provisioning orchestrator + SSE hub | ⬜ |
