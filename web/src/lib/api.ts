@@ -89,6 +89,19 @@ export function useLogout() {
   });
 }
 
+export function useRegister() {
+  return useMutation({
+    mutationFn: (body: { name: string; email: string; password: string }) =>
+      apiFetch<User>("/auth/register", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
+    },
+  });
+}
+
 // ── Projects ─────────────────────────────────────────────────────────────────
 
 export function useProjects() {

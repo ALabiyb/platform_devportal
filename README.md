@@ -193,7 +193,7 @@ helm upgrade --install devportal ./helm/devportal \
 | Day 09 | Provisioning orchestrator + SSE hub | ✅ |
 | Day 10 | Jenkinsfile + K8s manifest generator | ✅ |
 | Day 11 | React + Vite frontend scaffold | ✅ |
-| Day 12 | Frontend auth pages | ⬜ |
+| Day 12 | Frontend auth pages | ✅ |
 | Day 13 | Project form + SSE progress view | ⬜ |
 | Day 14 | Project list + detail + environment status | ⬜ |
 | Day 15 | Credentials + audit log UI | ⬜ |

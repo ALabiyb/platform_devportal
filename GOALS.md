@@ -16,7 +16,7 @@
 | **Day 09** | **Provisioning Orchestrator + SSE Hub** — 15-step async flow, per-project broadcast hub, live step updates | ✅ |
 | **Day 10** | **Jenkinsfile + K8s Manifest Generator** — per-stack templates (8 stacks), 7 YAMLs × N environments | ✅ |
 | **Day 11** | **React + Vite Scaffold** — TypeScript, shadcn/ui, Tailwind CSS, TanStack Query, `go:embed` wiring | ✅ |
-| **Day 12** | **Frontend Auth Pages** — login page, OIDC callback, protected routes, user context, nav layout | ⬜ |
+| **Day 12** | **Frontend Auth Pages** — login page, OIDC callback, protected routes, user context, nav layout | ✅ |
 | **Day 13** | **Project Form + SSE Progress View** — create-project wizard, live provisioning step stream UI | ⬜ |
 | **Day 14** | **Project List + Detail + Environment Status** — dashboard, per-environment status cards, ArgoCD sync state | ⬜ |
 | **Day 15** | **Credentials + Audit Log UI** — admin credential manager (encrypted at rest), audit event table | ⬜ |

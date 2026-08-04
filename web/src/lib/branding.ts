@@ -6,6 +6,8 @@ export interface Brand {
   company: string;
   primary_hue: number;
   logo_url: string;
+  // "local" → email/password form  |  "oidc" → SSO redirect button
+  auth_mode: "local" | "oidc";
 }
 
 export const DEFAULT_BRAND: Brand = {
@@ -13,6 +15,7 @@ export const DEFAULT_BRAND: Brand = {
   company: "",
   primary_hue: 199,
   logo_url: "",
+  auth_mode: "local",
 };
 
 // fetchBrand loads branding config from the Go server.

@@ -31,6 +31,9 @@ type brandingResponse struct {
 	Company    string `json:"company"`
 	PrimaryHue int    `json:"primary_hue"`
 	LogoURL    string `json:"logo_url"`
+	// AuthMode tells the React SPA which login UI to render:
+	// "local" → email/password form  |  "oidc" → SSO redirect button
+	AuthMode string `json:"auth_mode"`
 }
 
 func (h *Handler) handleBranding(w http.ResponseWriter, r *http.Request) {
@@ -42,5 +45,6 @@ func (h *Handler) handleBranding(w http.ResponseWriter, r *http.Request) {
 		Company:    h.cfg.BrandCompany,
 		PrimaryHue: h.cfg.BrandPrimaryHue,
 		LogoURL:    h.cfg.BrandLogoURL,
+		AuthMode:   h.cfg.AuthMode,
 	})
 }
