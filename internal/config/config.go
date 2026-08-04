@@ -23,8 +23,11 @@ import (
 )
 
 // Config holds every external-service URL and credential devportal needs.
-// All URL fields are intentionally empty by default — set them via environment
-// variables. Only structural values (ports, DB names, group names) have defaults.
+//
+// Hard required at startup (mustEnv): DB_PASSWORD, ENCRYPTION_KEY.
+// Everything else is optional — unset integration vars only cause errors at
+// provisioning time, not at startup. This lets the portal run fully for UI
+// and auth work before any external service is connected.
 type Config struct {
 
 	// ── HTTP Server ──────────────────────────────────────────────────────────
@@ -149,7 +152,17 @@ type Config struct {
 }
 
 // Load reads all configuration from environment variables and returns a
-// populated *Config. Calls os.Exit(1) on any missing required variable.
+// populated *Config.
+//
+// Only two variables are hard-required at startup:
+//   - DB_PASSWORD — devportal cannot open its database without it
+//   - ENCRYPTION_KEY — needed to encrypt/decrypt stored credentials
+//
+// All integration variables (GitLab, Jenkins, Harbor, etc.) are optional at
+// startup. The application starts and serves the UI without them. Errors only
+// surface at provisioning time when those integrations are actually called —
+// the provisioning step is marked failed and the error is broadcast over SSE.
+// This lets you run and develop the portal without every external service wired up.
 func Load() *Config {
 	cfg := &Config{
 		HTTPAddr: env("HTTP_ADDR", ":8080"),
@@ -164,7 +177,7 @@ func Load() *Config {
 
 		AuthMode: env("AUTH_MODE", "local"),
 
-		// OIDC — no URL defaults, all deployment-specific
+		// OIDC — only needed when AUTH_MODE=oidc
 		OIDCIssuerURL:      env("OIDC_ISSUER_URL", ""),
 		OIDCClientID:       env("OIDC_CLIENT_ID", "devportal"),
 		OIDCClientSecret:   env("OIDC_CLIENT_SECRET", ""),
@@ -172,54 +185,56 @@ func Load() *Config {
 		OIDCAdminGroup:     env("OIDC_ADMIN_GROUP", "devportal-admins"),
 		OIDCDeveloperGroup: env("OIDC_DEVELOPER_GROUP", "devportal-developers"),
 
-		// GitLab — API access only, no OAuth
-		GitLabURL:   mustEnv("GITLAB_URL"),
-		GitLabToken: mustEnv("GITLAB_TOKEN"),
+		// GitLab — only needed when provisioning projects
+		GitLabURL:   env("GITLAB_URL", ""),
+		GitLabToken: env("GITLAB_TOKEN", ""),
 
 		OrgName: env("ORG_NAME", "My Organization"),
 		OrgSlug: env("ORG_SLUG", "default"),
 
 		AdminEmail: env("ADMIN_EMAIL", ""),
 
-		// Jenkins — no IP or domain defaults
-		JenkinsURL:       mustEnv("JENKINS_URL"),
-		JenkinsPublicURL: mustEnv("JENKINS_PUBLIC_URL"),
+		// Jenkins — only needed when provisioning projects
+		JenkinsURL:       env("JENKINS_URL", ""),
+		JenkinsPublicURL: env("JENKINS_PUBLIC_URL", ""),
 		JenkinsUser:      env("JENKINS_USER", "admin"),
-		JenkinsToken:     mustEnv("JENKINS_TOKEN"),
+		JenkinsToken:     env("JENKINS_TOKEN", ""),
 
-		// Harbor — no domain defaults
-		HarborURL:   mustEnv("HARBOR_URL"),
+		// Harbor — only needed when provisioning projects
+		HarborURL:   env("HARBOR_URL", ""),
 		HarborUser:  env("HARBOR_USER", "admin"),
-		HarborToken: mustEnv("HARBOR_TOKEN"),
+		HarborToken: env("HARBOR_TOKEN", ""),
 
-		// DefectDojo — no domain defaults
-		DefectDojoURL:   mustEnv("DEFECTDOJO_URL"),
-		DefectDojoToken: mustEnv("DEFECTDOJO_TOKEN"),
+		// DefectDojo — only needed when provisioning projects
+		DefectDojoURL:   env("DEFECTDOJO_URL", ""),
+		DefectDojoToken: env("DEFECTDOJO_TOKEN", ""),
 
-		// ArgoCD — no domain defaults
-		ArgoCDURL:      mustEnv("ARGOCD_URL"),
-		ArgoCDToken:    mustEnv("ARGOCD_TOKEN"),
+		// ArgoCD — only needed when provisioning projects
+		ArgoCDURL:      env("ARGOCD_URL", ""),
+		ArgoCDToken:    env("ARGOCD_TOKEN", ""),
 		ArgoCDInsecure: env("ARGOCD_INSECURE", "false") != "false",
 
-		// App DB — host is deployment-specific, no default
-		AppDBHost:     mustEnv("APP_DB_HOST"),
+		// App DB — only needed when provisioning project databases
+		AppDBHost:     env("APP_DB_HOST", ""),
 		AppDBPort:     env("APP_DB_PORT", "5432"),
 		AppDBUser:     env("APP_DB_ADMIN_USER", "postgres"),
-		AppDBPassword: mustEnv("APP_DB_ADMIN_PASSWORD"),
+		AppDBPassword: env("APP_DB_ADMIN_PASSWORD", ""),
 
+		// REQUIRED: used for encrypting credentials at rest
 		EncryptionKey: mustEnv("ENCRYPTION_KEY"),
 
-		// Jenkinsfile / manifest defaults — all deployment-specific
-		RegistryURL:           mustEnv("REGISTRY_URL"),
+		// Jenkinsfile / K8s manifest values — only needed when provisioning
+		RegistryURL:           env("REGISTRY_URL", ""),
 		RegistryCredentialsID: env("REGISTRY_CREDENTIALS_ID", "robot-jenkins"),
-		GitCredentialsID:      mustEnv("GIT_CREDENTIALS_ID"),
-		SharedLibraryURL:      mustEnv("SHARED_LIBRARY_URL"),
-		DependencyTrackURL:    mustEnv("DEPENDENCY_TRACK_URL"),
+		GitCredentialsID:      env("GIT_CREDENTIALS_ID", ""),
+		SharedLibraryURL:      env("SHARED_LIBRARY_URL", ""),
+		DependencyTrackURL:    env("DEPENDENCY_TRACK_URL", ""),
 		K8sManifestGroup:      env("K8S_MANIFEST_GROUP", "kubernetes-manifest"),
-		IngressBaseDomain:     mustEnv("INGRESS_BASE_DOMAIN"),
+		IngressBaseDomain:     env("INGRESS_BASE_DOMAIN", ""),
 
+		// Bot — only needed when committing generated files to GitLab
 		BotName:  env("BOT_NAME", "DevPortal Bot"),
-		BotEmail: mustEnv("BOT_EMAIL"),
+		BotEmail: env("BOT_EMAIL", "devportal@localhost"),
 
 		TLSSkipVerify: env("TLS_SKIP_VERIFY", "true") != "false",
 

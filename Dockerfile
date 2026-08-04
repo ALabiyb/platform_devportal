@@ -25,7 +25,7 @@ COPY web/ ./
 RUN npm run build
 
 # ── Stage 2: Go build ────────────────────────────────────────────────────────
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # git is needed so `go mod download` can fetch modules over HTTPS.
 # ca-certificates is needed for outbound HTTPS during the build.
