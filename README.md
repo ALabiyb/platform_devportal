@@ -186,10 +186,10 @@ helm upgrade --install devportal ./helm/devportal \
 | Day 04 | HTTP router — chi, RBAC middleware, rate limiter, all routes | ✅ |
 | Day 05 | Plugin interfaces + GitLab adapter | ✅ |
 | Day 06 | Jenkins adapter | ✅ |
-| Day 07 | Harbor + DefectDojo adapters | ⬜ |
-| Day 08 | ArgoCD adapter + DB provisioner | ⬜ |
-| Day 09 | Provisioning orchestrator + SSE hub | ⬜ |
-| Day 10 | Jenkinsfile + K8s manifest generator | ⬜ |
+| Day 07 | Harbor + DefectDojo adapters | ✅ |
+| Day 08 | ArgoCD adapter + DB provisioner | ✅ |
+| Day 09 | Provisioning orchestrator + SSE hub | ✅ |
+| Day 10 | Jenkinsfile + K8s manifest generator | ✅ |
 | Day 11 | React + Vite frontend scaffold | ⬜ |
 | Day 12 | Frontend auth pages | ⬜ |
 | Day 13 | Project form + SSE progress view | ⬜ |

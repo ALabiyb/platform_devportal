@@ -11,10 +11,10 @@
 | **Day 04** | **HTTP Router** — `chi` router, RBAC middleware, rate limiter, request logger, all route definitions wired | ✅ |
 | **Day 05** | **Plugin Interfaces + GitLab Adapter** — all 6 Go interfaces defined, full GitLab adapter implemented | ✅ |
 | **Day 06** | **Jenkins Adapter** — list folders, ensure folder, create multibranch job, trigger branch scan | ✅ |
-| **Day 07** | **Harbor + DefectDojo Adapters** — ensure image project, create security product + engagement | ⬜ |
-| **Day 08** | **ArgoCD Adapter + DB Provisioner** — create ArgoCD Application per env, CREATE DB + USER + GRANT | ⬜ |
-| **Day 09** | **Provisioning Orchestrator + SSE Hub** — 15-step async flow, per-project broadcast hub, live step updates | ⬜ |
-| **Day 10** | **Jenkinsfile + K8s Manifest Generator** — per-stack templates (8 stacks), 7 YAMLs × N environments | ⬜ |
+| **Day 07** | **Harbor + DefectDojo Adapters** — ensure image project, create security product + engagement | ✅ |
+| **Day 08** | **ArgoCD Adapter + DB Provisioner** — create ArgoCD Application per env, CREATE DB + USER + GRANT | ✅ |
+| **Day 09** | **Provisioning Orchestrator + SSE Hub** — 15-step async flow, per-project broadcast hub, live step updates | ✅ |
+| **Day 10** | **Jenkinsfile + K8s Manifest Generator** — per-stack templates (8 stacks), 7 YAMLs × N environments | ✅ |
 | **Day 11** | **React + Vite Scaffold** — TypeScript, shadcn/ui, Tailwind CSS, TanStack Query, `go:embed` wiring | ⬜ |
 | **Day 12** | **Frontend Auth Pages** — login page, OIDC callback, protected routes, user context, nav layout | ⬜ |
 | **Day 13** | **Project Form + SSE Progress View** — create-project wizard, live provisioning step stream UI | ⬜ |

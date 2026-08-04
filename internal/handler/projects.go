@@ -4,66 +4,314 @@
 // ---------------------------------------------------------------------------
 
 // projects.go contains HTTP handlers for the /api/v1/projects routes.
-//
-// Full implementations land in:
-//   - Day 09: provisioning orchestrator (CreateProject triggers the 15-step flow)
-//   - Day 10: Jenkinsfile + K8s manifest generator (DownloadJenkinsfile)
-//
-// All handlers are stubs until then — they return 501 with a clear message
-// so the router is fully wired on Day 04 and actual logic is dropped in later.
+// All project operations — listing, creating, SSE streaming, and Jenkinsfile
+// download — live here. CreateProject triggers the 15-step provisioning
+// orchestrator as a background goroutine and returns 201 immediately.
 
 package handler
 
-import "net/http"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
 
-// ListProjects returns the list of projects visible to the authenticated user.
-// Scoped to the user's teams: developers see their own team's projects,
-// admins see all projects across the org.
-// Implemented: Day 09 (provisioning orchestrator + project list query)
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
+	"github.com/ALabiyb/platform_devportal/internal/db"
+	"github.com/ALabiyb/platform_devportal/internal/provisioner"
+)
+
+// ── List / Get ────────────────────────────────────────────────────────────────
+
+// ListProjects returns all projects in the authenticated user's org.
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
-	stub(w, "list projects", "Day 09")
+	user, _ := authpkg.UserFromContext(r.Context())
+	projects, err := h.db.ListProjectsByOrg(r.Context(), user.OrgID)
+	if err != nil {
+		jsonError(w, "list projects: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, projects)
 }
 
-// GetProject returns a single project by ID including status and step summary.
-// Implemented: Day 09
+// GetProject returns a single project by ID.
 func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
-	stub(w, "get project", "Day 09")
+	id, err := parseUUID(r, "projectID")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	project, err := h.db.GetProject(r.Context(), id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, project)
 }
 
-// CreateProject validates the project form, persists the project row, and
-// fires the 15-step provisioning orchestrator as a background goroutine.
-// The SSE stream (/projects/{id}/stream) reports live progress to the browser.
-// Implemented: Day 09
-func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
-	stub(w, "create project + start provisioning", "Day 09")
-}
-
-// ListEnvironments returns the environments (dev / uat / prod) for a project,
-// including K8s namespace, ingress URL, ArgoCD app name, and DB credentials.
-// Implemented: Day 09
+// ListEnvironments returns the environments (dev / uat / prod) for a project.
 func (h *Handler) ListEnvironments(w http.ResponseWriter, r *http.Request) {
-	stub(w, "list project environments", "Day 09")
+	id, err := parseUUID(r, "projectID")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	envs, err := h.db.GetEnvironmentsByProject(r.Context(), id)
+	if err != nil {
+		jsonError(w, "list environments: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, envs)
 }
 
-// ListProvisioningSteps returns the ordered list of provisioning steps and
-// their current status (pending / running / done / failed) for a project.
-// The SSE stream sends these same rows as live events during provisioning.
-// Implemented: Day 09
+// ListProvisioningSteps returns the ordered list of provisioning steps for a project.
 func (h *Handler) ListProvisioningSteps(w http.ResponseWriter, r *http.Request) {
-	stub(w, "list provisioning steps", "Day 09")
+	id, err := parseUUID(r, "projectID")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	steps, err := h.db.GetProvisioningSteps(r.Context(), id)
+	if err != nil {
+		jsonError(w, "list steps: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, steps)
 }
 
-// StreamProvisioningProgress upgrades the connection to an SSE stream and
-// broadcasts step-status updates to every connected browser tab watching
-// this project's provisioning progress.
-// Implemented: Day 09 (SSE broadcast hub)
+// ── Create ────────────────────────────────────────────────────────────────────
+
+// createProjectRequest is the JSON body for POST /api/v1/projects.
+type createProjectRequest struct {
+	Name              string    `json:"name"`
+	TeamID            uuid.UUID `json:"team_id"`
+	BuildTool         string    `json:"build_tool"`
+	GitNamespace      string    `json:"git_namespace"`      // GitLab group path, e.g. "nexbridge/backend"
+	NotificationEmail string    `json:"notification_email"`
+}
+
+// CreateProject validates the form, persists the project + environments +
+// provisioning step rows, then launches the orchestrator as a background goroutine.
+// Returns 201 immediately so the browser can connect to the SSE stream.
+func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
+	user, _ := authpkg.UserFromContext(r.Context())
+
+	var req createProjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.GitNamespace == "" || req.TeamID == uuid.Nil {
+		jsonError(w, "name, git_namespace, and team_id are required", http.StatusBadRequest)
+		return
+	}
+	if req.BuildTool == "" {
+		req.BuildTool = "maven"
+	}
+
+	slug := slugify(req.Name)
+	harborProject := h.cfg.K8sManifestGroup + "/" + slug // reuse manifest group as Harbor namespace prefix
+
+	// Store team slug as Jenkins folder name
+	team, err := h.db.GetTeam(r.Context(), req.TeamID)
+	if err != nil {
+		jsonError(w, "team not found", http.StatusBadRequest)
+		return
+	}
+
+	project, err := h.db.CreateProject(r.Context(), db.Project{
+		TeamID:            req.TeamID,
+		Name:              req.Name,
+		Slug:              slug,
+		GitRepoURL:        "", // filled in after EnsureRepo in step 1
+		HarborProject:     harborProject,
+		JenkinsFolder:     team.Slug,
+		BuildTool:         req.BuildTool,
+		NotificationEmail: req.NotificationEmail,
+		CreatedBy:         &user.ID,
+	})
+	if err != nil {
+		jsonError(w, "create project: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Insert all 15 step rows upfront so the SSE stream can display them immediately.
+	steps := make([]db.ProvisioningStep, len(provisioner.StepLabels))
+	for i, label := range provisioner.StepLabels {
+		steps[i] = db.ProvisioningStep{
+			ProjectID: project.ID,
+			StepIndex: i + 1,
+			Label:     label,
+		}
+	}
+	if err := h.db.CreateProvisioningSteps(r.Context(), steps); err != nil {
+		jsonError(w, "create provisioning steps: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Pre-create environment rows so the SSE and ArgoCD steps can reference them.
+	envs := make([]*db.Environment, 0, 3)
+	for _, envName := range []string{"dev", "uat", "prod"} {
+		env, err := h.db.CreateEnvironment(r.Context(), db.Environment{
+			ProjectID: project.ID,
+			Name:      envName,
+			Namespace: slug + "-" + envName,
+		})
+		if err != nil {
+			jsonError(w, fmt.Sprintf("create %s environment: %s", envName, err), http.StatusInternalServerError)
+			return
+		}
+		envs = append(envs, env)
+	}
+
+	// Launch orchestrator in a detached goroutine — use Background context so
+	// the flow is not cancelled when the HTTP request context is done.
+	input := provisioner.ProvisionInput{
+		Project:      project,
+		Environments: envs,
+		GitNamespace: req.GitNamespace,
+	}
+	go h.orchestrator.Provision(context.Background(), input)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":         project.ID,
+		"name":       project.Name,
+		"slug":       project.Slug,
+		"status":     project.Status,
+		"stream_url": fmt.Sprintf("/api/v1/projects/%s/stream", project.ID),
+		"steps_url":  fmt.Sprintf("/api/v1/projects/%s/steps", project.ID),
+	})
+}
+
+// ── SSE stream ────────────────────────────────────────────────────────────────
+
+// StreamProvisioningProgress upgrades to an SSE stream and broadcasts
+// step-status updates to every connected browser tab watching this project.
 func (h *Handler) StreamProvisioningProgress(w http.ResponseWriter, r *http.Request) {
-	stub(w, "SSE provisioning progress stream", "Day 09")
+	id, err := parseUUID(r, "projectID")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // disable nginx/traefik response buffering
+	w.WriteHeader(http.StatusOK)
+
+	// Send current step snapshot so a late-joining browser sees all steps at once.
+	steps, _ := h.db.GetProvisioningSteps(r.Context(), id)
+	for _, s := range steps {
+		detail := ""
+		if s.Detail != nil {
+			detail = *s.Detail
+		}
+		event := provisioner.StepEvent{
+			StepIndex: s.StepIndex,
+			Label:     s.Label,
+			Status:    s.Status,
+			Detail:    detail,
+		}
+		writeSSE(w, event)
+	}
+	flusher.Flush()
+
+	// Subscribe to live updates from the orchestrator.
+	ch, unsubscribe := h.hub.Subscribe(id)
+	defer unsubscribe()
+
+	for {
+		select {
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			writeSSE(w, event)
+			flusher.Flush()
+			if event.Done {
+				return // provisioning finished — close the stream
+			}
+		case <-r.Context().Done():
+			return // browser disconnected
+		}
+	}
 }
 
-// DownloadJenkinsfile returns the generated Jenkinsfile text stored in the DB
-// for re-download after provisioning is complete.
-// Implemented: Day 10 (Jenkinsfile generator)
+// writeSSE encodes event as JSON and writes one SSE data frame.
+func writeSSE(w http.ResponseWriter, event provisioner.StepEvent) {
+	data, _ := json.Marshal(event)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+}
+
+// ── Jenkinsfile download ───────────────────────────────────────────────────────
+
+// DownloadJenkinsfile returns the stored Jenkinsfile text for re-download.
 func (h *Handler) DownloadJenkinsfile(w http.ResponseWriter, r *http.Request) {
-	stub(w, "download generated Jenkinsfile", "Day 10")
+	id, err := parseUUID(r, "projectID")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	project, err := h.db.GetProject(r.Context(), id)
+	if err != nil || project.GeneratedJenkinsfile == nil {
+		jsonError(w, "Jenkinsfile not yet generated", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="Jenkinsfile"`)
+	fmt.Fprint(w, *project.GeneratedJenkinsfile)
+}
+
+// ── shared handler utilities ──────────────────────────────────────────────────
+
+func jsonOK(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func jsonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func parseUUID(r *http.Request, param string) (uuid.UUID, error) {
+	raw := chi.URLParam(r, param)
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid %s: %s", param, raw)
+	}
+	return id, nil
+}
+
+// slugify converts a project name to a URL-safe lowercase slug.
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	s = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			return r
+		}
+		if r == ' ' || r == '_' {
+			return '-'
+		}
+		return -1
+	}, s)
+	// Collapse consecutive hyphens
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-")
 }

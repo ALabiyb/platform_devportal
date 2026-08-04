@@ -4,29 +4,69 @@
 // ---------------------------------------------------------------------------
 
 // teams.go contains HTTP handlers for the /api/v1/teams routes.
-//
-// Teams group developers within an org. Projects belong to a team.
-// Full implementations land in Day 09 alongside the provisioning layer.
 
 package handler
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+
+	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
+	"github.com/ALabiyb/platform_devportal/internal/db"
+)
 
 // ListTeams returns all teams in the authenticated user's org.
-// Implemented: Day 09
 func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
-	stub(w, "list teams", "Day 09")
+	user, _ := authpkg.UserFromContext(r.Context())
+	teams, err := h.db.ListTeamsByOrg(r.Context(), user.OrgID)
+	if err != nil {
+		jsonError(w, "list teams: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, teams)
 }
 
-// GetTeam returns a single team by ID including its members.
-// Implemented: Day 09
+// GetTeam returns a single team by ID.
 func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
-	stub(w, "get team", "Day 09")
+	id, err := parseUUID(r, "teamID")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	team, err := h.db.GetTeam(r.Context(), id)
+	if err != nil {
+		jsonError(w, "team not found", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, team)
 }
 
-// CreateTeam creates a new team within the org.
-// Requires admin role — only platform engineers can create teams.
-// Implemented: Day 09
+// createTeamRequest is the JSON body for POST /api/v1/teams.
+type createTeamRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateTeam creates a new team within the org. Requires admin role.
 func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
-	stub(w, "create team", "Day 09")
+	user, _ := authpkg.UserFromContext(r.Context())
+
+	var req createTeamRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		jsonError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	team, err := h.db.CreateTeam(r.Context(), db.Team{
+		OrgID: user.OrgID,
+		Name:  req.Name,
+		Slug:  slugify(req.Name),
+	})
+	if err != nil {
+		jsonError(w, "create team: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(team)
 }

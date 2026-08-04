@@ -40,6 +40,9 @@ import (
 	"github.com/ALabiyb/platform_devportal/internal/config"
 	"github.com/ALabiyb/platform_devportal/internal/db"
 	"github.com/ALabiyb/platform_devportal/internal/handler"
+	"github.com/ALabiyb/platform_devportal/internal/plugin"
+	"github.com/ALabiyb/platform_devportal/internal/provisioner"
+	tmpl "github.com/ALabiyb/platform_devportal/internal/template"
 )
 
 // version is set at build time via -ldflags="-X main.version=<git-tag>".
@@ -81,21 +84,42 @@ func main() {
 	}
 	slog.Info("auth ready", "mode", cfg.AuthMode)
 
+	// Construct all plugin adapters.
+	gitAdapter := plugin.NewGitLabAdapter(cfg, httpClient)
+	ciAdapter := plugin.NewJenkinsAdapter(cfg, httpClient)
+	registryAdapter := plugin.NewHarborAdapter(cfg, httpClient)
+	securityAdapter := plugin.NewDefectDojoAdapter(cfg, httpClient)
+	gitopsAdapter := plugin.NewArgoCDAdapter(cfg, httpClient)
+	dbAdapter := plugin.NewPostgresDBAdapter(cfg)
+	slog.Info("plugin adapters ready")
+
+	// Template generator bakes config values into Jenkinsfiles and K8s manifests.
+	templates := tmpl.New(cfg)
+
+	// SSE hub and provisioning orchestrator.
+	hub := provisioner.NewHub()
+	orch := provisioner.New(
+		database, hub,
+		gitAdapter, ciAdapter, registryAdapter,
+		securityAdapter, gitopsAdapter, dbAdapter,
+		cfg, templates,
+	)
+	slog.Info("provisioner ready")
+
 	// Session cleanup goroutine — deletes expired rows from sessions table once per hour.
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	go runSessionCleanup(cleanupCtx, database)
 
 	// Wire up the full chi router with all middleware and routes.
-	h := handler.New(database, cfg, authHandler, version)
+	h := handler.New(database, cfg, authHandler, orch, hub, version)
 
 	// HTTP server with explicit timeouts.
-	// WriteTimeout is 60s to accommodate SSE streams that keep connections open.
+	// WriteTimeout is omitted — SSE streams need unbounded write time.
 	srv := &http.Server{
-		Addr:         cfg.HTTPAddr,
-		Handler:      h.Routes(),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:        cfg.HTTPAddr,
+		Handler:     h.Routes(),
+		ReadTimeout: 15 * time.Second,
+		IdleTimeout: 120 * time.Second,
 	}
 
 	go func() {

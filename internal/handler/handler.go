@@ -49,15 +49,18 @@ import (
 	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
 	"github.com/ALabiyb/platform_devportal/internal/config"
 	"github.com/ALabiyb/platform_devportal/internal/db"
+	"github.com/ALabiyb/platform_devportal/internal/provisioner"
 )
 
 // Handler holds every dependency shared across all HTTP handlers.
 // Create one with New() and keep it for the process lifetime.
 type Handler struct {
-	db      *db.DB
-	cfg     *config.Config
-	auth    *authpkg.Handler
-	version string
+	db           *db.DB
+	cfg          *config.Config
+	auth         *authpkg.Handler
+	orchestrator *provisioner.Orchestrator
+	hub          *provisioner.Hub
+	version      string
 
 	// per-IP rate limiting
 	mu       sync.Mutex
@@ -70,13 +73,15 @@ type visitor struct {
 }
 
 // New constructs a Handler and starts the rate-limiter cleanup goroutine.
-func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, version string) *Handler {
+func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, orch *provisioner.Orchestrator, hub *provisioner.Hub, version string) *Handler {
 	h := &Handler{
-		db:       database,
-		cfg:      cfg,
-		auth:     authHandler,
-		version:  version,
-		visitors: make(map[string]*visitor),
+		db:           database,
+		cfg:          cfg,
+		auth:         authHandler,
+		orchestrator: orch,
+		hub:          hub,
+		version:      version,
+		visitors:     make(map[string]*visitor),
 	}
 	go h.cleanupVisitors()
 	return h
