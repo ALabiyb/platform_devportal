@@ -24,7 +24,7 @@
 #   cp .env.example .env        # fill in secrets
 #   docker exec postgres psql -U postgres -c "CREATE DATABASE devportal; CREATE USER devportal WITH PASSWORD 'changeme'; GRANT ALL ON DATABASE devportal TO devportal;"
 #   docker compose up -d
-#   open http://devportal.localhost
+#   open https://devportal.localhost   (self-signed cert — accept the browser warning)
 
 services:
 
@@ -46,9 +46,12 @@ services:
     labels:
       # Traefik picks up these labels automatically and creates the routing rule.
       # devportal.localhost resolves via your AdGuard Home or /etc/hosts.
+      # Uses websecure (HTTPS/443) because the web entrypoint has a global
+      # HTTP→HTTPS redirect — registering on web alone causes a 404 after redirect.
       - "traefik.enable=true"
       - "traefik.http.routers.devportal.rule=Host(`devportal.localhost`)"
-      - "traefik.http.routers.devportal.entrypoints=web"
+      - "traefik.http.routers.devportal.entrypoints=websecure"
+      - "traefik.http.routers.devportal.tls=true"
       - "traefik.http.services.devportal.loadbalancer.server.port=8080"
     restart: unless-stopped
 
