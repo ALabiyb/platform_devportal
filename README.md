@@ -130,12 +130,14 @@ docker compose up -d
 ### Available make targets
 
 ```bash
-make build        # compile binary to ./bin/devportal
+make build        # compile Go binary to ./bin/devportal (needs web/dist/)
+make frontend     # npm ci + npm run build inside web/
+make build-full   # frontend then Go binary (full production build)
 make run          # run locally (reads .env)
 make test         # unit tests with race detector
 make lint         # golangci-lint
 make migrate      # apply SQL migrations
-make docker-build # build production Docker image
+make docker-build # build production Docker image (Node + Go multi-stage)
 make docker-push  # build and push to Harbor
 make help         # list all targets
 ```
@@ -190,7 +192,7 @@ helm upgrade --install devportal ./helm/devportal \
 | Day 08 | ArgoCD adapter + DB provisioner | ✅ |
 | Day 09 | Provisioning orchestrator + SSE hub | ✅ |
 | Day 10 | Jenkinsfile + K8s manifest generator | ✅ |
-| Day 11 | React + Vite frontend scaffold | ⬜ |
+| Day 11 | React + Vite frontend scaffold | ✅ |
 | Day 12 | Frontend auth pages | ⬜ |
 | Day 13 | Project form + SSE progress view | ⬜ |
 | Day 14 | Project list + detail + environment status | ⬜ |

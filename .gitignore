@@ -11,9 +11,11 @@ bin/
 # Go module cache artifacts
 vendor/
 
-# Frontend build output (embedded into Go binary at build time)
-web/dist/
+# Frontend — node_modules never committed; dist/* is gitignored EXCEPT the
+# placeholder index.html so `go build` works before `npm run build`.
 web/node_modules/
+web/dist/*
+!web/dist/index.html
 
 # IDE / editor state
 .idea/

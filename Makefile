@@ -14,12 +14,19 @@ IMAGE   ?= $(shell echo $${REGISTRY_URL}/devportal/devportal)
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build run test lint tidy docker-build docker-push migrate clean help
+.PHONY: build run test lint tidy frontend build-full docker-build docker-push migrate clean help
 
-## build: compile the Go binary for the current OS/arch into ./bin/
+## build: compile the Go binary (requires web/dist to exist — run 'make frontend' first)
 build:
 	@mkdir -p bin
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
+
+## frontend: install npm deps and build the React SPA into web/dist/
+frontend:
+	cd web && npm ci && npm run build
+
+## build-full: build frontend then Go binary (full production build)
+build-full: frontend build
 
 ## run: start devportal locally (reads .env — copy .env.example first)
 run:

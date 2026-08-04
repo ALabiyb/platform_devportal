@@ -36,6 +36,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -60,6 +61,7 @@ type Handler struct {
 	auth         *authpkg.Handler
 	orchestrator *provisioner.Orchestrator
 	hub          *provisioner.Hub
+	webFS        fs.FS
 	version      string
 
 	// per-IP rate limiting
@@ -73,13 +75,14 @@ type visitor struct {
 }
 
 // New constructs a Handler and starts the rate-limiter cleanup goroutine.
-func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, orch *provisioner.Orchestrator, hub *provisioner.Hub, version string) *Handler {
+func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, orch *provisioner.Orchestrator, hub *provisioner.Hub, webFS fs.FS, version string) *Handler {
 	h := &Handler{
 		db:           database,
 		cfg:          cfg,
 		auth:         authHandler,
 		orchestrator: orch,
 		hub:          hub,
+		webFS:        webFS,
 		version:      version,
 		visitors:     make(map[string]*visitor),
 	}
@@ -154,9 +157,8 @@ func (h *Handler) Routes() http.Handler {
 		})
 	})
 
-	// ── React SPA (Day 11) ─────────────────────────────────────────────────
-	// Day 11 replaces this with go:embed of the Vite build output.
-	r.Get("/", h.handleRoot)
+	// ── React SPA — serves the embedded Vite build for all non-API paths ──
+	r.Handle("/*", spaHandler(h.webFS))
 
 	return r
 }
@@ -175,16 +177,6 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status":%q,"db":%q,"service":"devportal","version":%q}`,
 		dbStatus, dbStatus, h.version,
 	)
-}
-
-// handleRoot returns a minimal JSON response until the React SPA is embedded (Day 11).
-func (h *Handler) handleRoot(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"service": "devportal",
-		"version": h.version,
-		"ui":      "React SPA — coming Day 11",
-	})
 }
 
 // requestLogger is a chi-compatible middleware that writes one structured slog

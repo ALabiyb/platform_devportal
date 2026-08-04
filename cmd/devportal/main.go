@@ -43,6 +43,7 @@ import (
 	"github.com/ALabiyb/platform_devportal/internal/plugin"
 	"github.com/ALabiyb/platform_devportal/internal/provisioner"
 	tmpl "github.com/ALabiyb/platform_devportal/internal/template"
+	"github.com/ALabiyb/platform_devportal/web"
 )
 
 // version is set at build time via -ldflags="-X main.version=<git-tag>".
@@ -111,7 +112,7 @@ func main() {
 	go runSessionCleanup(cleanupCtx, database)
 
 	// Wire up the full chi router with all middleware and routes.
-	h := handler.New(database, cfg, authHandler, orch, hub, version)
+	h := handler.New(database, cfg, authHandler, orch, hub, web.FS, version)
 
 	// HTTP server with explicit timeouts.
 	// WriteTimeout is omitted — SSE streams need unbounded write time.

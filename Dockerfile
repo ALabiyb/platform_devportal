@@ -4,13 +4,27 @@
 # ---------------------------------------------------------------------------
 #
 # Multi-stage build:
-#   Stage 1 (builder) — compiles a fully static Go binary
-#   Stage 2 (final)   — copies only the binary into a minimal distroless image
+#   Stage 1 (frontend) — compiles React SPA with Vite into web/dist/
+#   Stage 2 (builder)  — compiles a fully static Go binary (embeds web/dist/)
+#   Stage 3 (final)    — copies only the binary into a minimal distroless image
 #
 # The final image has no shell, no package manager, and runs as a non-root
 # user — smallest possible attack surface for a production container.
 
-# ── Stage 1: Build ──────────────────────────────────────────────────────────
+# ── Stage 1: Frontend ────────────────────────────────────────────────────────
+FROM node:20-alpine AS frontend
+
+WORKDIR /web
+
+# Install deps with a clean install to respect package-lock.json exactly.
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci
+
+# Copy remaining frontend source and build.
+COPY web/ ./
+RUN npm run build
+
+# ── Stage 2: Go build ────────────────────────────────────────────────────────
 FROM golang:1.23-alpine AS builder
 
 # git is needed so `go mod download` can fetch modules over HTTPS.
@@ -25,17 +39,20 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the rest of the source tree and compile.
+# Copy Go source. Then overlay the compiled frontend into web/dist/ so
+# the go:embed directive in web/embed.go picks it up.
+COPY . .
+COPY --from=frontend /web/dist ./web/dist
+
 # CGO_ENABLED=0 — produces a static binary with no libc dependency.
 # -trimpath     — strips local filesystem paths from the binary (reproducibility + security).
 # -ldflags -s -w — strips debug info and DWARF tables to shrink binary size.
-COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath \
     -ldflags="-s -w" \
     -o /devportal ./cmd/devportal
 
-# ── Stage 2: Final image ─────────────────────────────────────────────────────
+# ── Stage 3: Final image ─────────────────────────────────────────────────────
 # gcr.io/distroless/static:nonroot — no shell, no root, no unnecessary OS packages.
 FROM gcr.io/distroless/static:nonroot AS final
 
