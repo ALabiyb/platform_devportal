@@ -66,9 +66,10 @@ var StepLabels = []string{
 // ProvisionInput carries everything the orchestrator needs beyond what is
 // already stored in db.Project.
 type ProvisionInput struct {
-	Project      *db.Project
-	Environments []*db.Environment // pre-created dev / uat / prod rows
-	GitNamespace string            // GitLab namespace where the source repo is created, e.g. "nexbridge/backend"
+	Project         *db.Project
+	Environments    []*db.Environment // pre-created dev / uat / prod rows
+	GitNamespace    string            // namespace where the source repo lives, e.g. "restaurant-pos"
+	ApplicationSlug string            // parent application slug, e.g. "restaurant-pos"
 }
 
 // Orchestrator executes the 15-step provisioning flow for one project at a time.
@@ -121,9 +122,26 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 	projectID := p.ID
 	repoPath := input.GitNamespace + "/" + p.Slug
 	manifestGroup := o.cfg.K8sManifestGroup
-	manifestRepoPath := manifestGroup + "/" + p.Slug
 
-	slog.Info("provisioning started", "project", p.Name, "id", projectID)
+	// Option B: one manifest repo per application (e.g. restaurant-pos-k8s).
+	// All services in the same application share this repo; each service gets
+	// its own subdirectory (api-gateway/, billing/, etc.).
+	appSlug := input.ApplicationSlug
+	if appSlug == "" {
+		appSlug = input.GitNamespace // fallback to namespace if slug not passed
+	}
+	manifestRepoName := appSlug + "-k8s"
+	manifestRepoPath := manifestGroup + "/" + manifestRepoName
+
+	// Resolve the base URL for the active git provider (Bug fix: was always GitLabURL).
+	gitBaseURL := o.cfg.GiteaURL
+	if o.cfg.GitProvider == "gitlab" {
+		gitBaseURL = o.cfg.GitLabURL
+	}
+	manifestRepoURL := strings.TrimRight(gitBaseURL, "/") + "/" + manifestRepoPath + ".git"
+
+	slog.Info("provisioning started", "project", p.Name, "id", projectID,
+		"manifest_repo", manifestRepoPath)
 
 	// ── Step 1: Create source repository ─────────────────────────────────────
 	var repoResult *plugin.RepoResult
@@ -143,16 +161,45 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 	}
 
 	// Persist resolved URLs to DB right after repo creation.
-	manifestRepoURL := strings.TrimRight(o.cfg.GitLabURL, "/") + "/" + manifestRepoPath + ".git"
 	_ = o.database.UpdateProjectURLs(ctx, projectID, repoResult.HTTPURL, manifestRepoURL)
 
 	// ── Step 2: Commit initial project files ──────────────────────────────────
-	jf := o.templates.Jenkinsfile(tmpl.JenkinsfileInput{
-		AppName:           p.Slug,
-		HarborProject:     p.HarborProject,
-		BuildTool:         p.BuildTool,
+	// Fetch the admin-editable template from DB; fall back to embedded defaults.
+	var jenkinsfileTemplate, dockerfileContent string
+	if t, err := o.database.GetPipelineTemplate(ctx, p.BuildTool); err == nil {
+		jenkinsfileTemplate = t.Jenkinsfile
+		dockerfileContent = t.Dockerfile
+	} else {
+		jenkinsfileTemplate = tmpl.DefaultJenkinsfileTemplate()
+		dockerfileContent = tmpl.DefaultDockerfile(p.BuildTool)
+	}
+
+	stagingURL := ""
+	if p.StagingURL != nil {
+		stagingURL = *p.StagingURL
+	}
+
+	// K8s manifest path: service subdirectory within the shared application repo.
+	// Promotion (uat/prod) uses the same file path on different manifest branches.
+	k8sManifestPaths := p.Slug + "/deployment.yaml"
+	if p.K8sManifestPaths != "" {
+		k8sManifestPaths = p.K8sManifestPaths
+	}
+
+	jfInput := tmpl.JenkinsfileInput{
+		AppName:          p.Slug,
+		HarborProject:    p.HarborProject,
+		BuildTool:        p.BuildTool,
 		NotificationEmail: p.NotificationEmail,
-	})
+		GitRepoURL:       repoResult.HTTPURL,
+		ManifestRepoURL:  manifestRepoURL,
+		AppTimezone:      p.AppTimezone,
+		StagingURL:       stagingURL,
+		K8sManifestPaths: k8sManifestPaths,
+		// EngagementID: 0 — filled after Step 11; Jenkinsfile re-committed then.
+	}
+
+	jf := o.templates.RenderJenkinsfile(jenkinsfileTemplate, jfInput)
 	_ = o.database.SaveGeneratedJenkinsfile(ctx, projectID, jf)
 
 	if err := o.step(ctx, projectID, 2, func() error {
@@ -165,7 +212,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 			Files: []plugin.CommitFile{
 				{Path: "Jenkinsfile", Content: jf, Action: "upsert"},
 				{Path: "VERSION", Content: "0.0.1\n", Action: "upsert"},
-				{Path: "Dockerfile", Content: tmpl.Dockerfile(p.BuildTool), Action: "upsert"},
+				{Path: "Dockerfile", Content: dockerfileContent, Action: "upsert"},
 			},
 		})
 	}); err != nil {
@@ -244,7 +291,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 
 	// ── Step 9: Create Harbor robot account ───────────────────────────────────
 	if err := o.step(ctx, projectID, 9, func() error {
-		_, e := o.registry.EnsureRobotAccount(ctx, p.HarborProject, "jenkins-push")
+		_, e := o.registry.EnsureRobotAccount(ctx, p.HarborProject, p.Slug+"-jenkins")
 		// TODO Day 15: store robot credentials in the encrypted credential vault.
 		return e
 	}); err != nil {
@@ -270,62 +317,88 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 	}
 
 	// ── Step 11: Create DefectDojo engagement ─────────────────────────────────
+	// Capture ID so we can bake it into the Jenkinsfile immediately after.
+	var engagementID int
 	if err := o.step(ctx, projectID, 11, func() error {
-		_, e := o.security.CreateEngagement(ctx, plugin.CreateEngagementInput{
+		var e error
+		engagementID, e = o.security.CreateEngagement(ctx, plugin.CreateEngagementInput{
 			ProductID:      productID,
 			Name:           p.Name + " CI/CD",
 			Description:    "Automated engagement managed by DevPortal",
 			EngagementType: "CI/CD",
 		})
-		return e
+		if e != nil {
+			return e
+		}
+		_ = o.database.SetDefectDojoEngagementID(ctx, projectID, engagementID)
+
+		// Re-render Jenkinsfile with the real engagement ID and push the update.
+		jfInput.EngagementID = engagementID
+		jfUpdated := o.templates.RenderJenkinsfile(jenkinsfileTemplate, jfInput)
+		_ = o.database.SaveGeneratedJenkinsfile(ctx, projectID, jfUpdated)
+		return o.git.CommitFiles(ctx, plugin.CommitFilesInput{
+			RepoPath:    repoPath,
+			Branch:      "main",
+			Message:     "chore: DevPortal — set DefectDojo engagement ID in Jenkinsfile",
+			AuthorName:  o.cfg.BotName,
+			AuthorEmail: o.cfg.BotEmail,
+			Files: []plugin.CommitFile{
+				{Path: "Jenkinsfile", Content: jfUpdated, Action: "upsert"},
+			},
+		})
 	}); err != nil {
 		o.fail(ctx, projectID)
 		return
 	}
 
-	// ── Step 12: Create manifest repo + commit K8s YAMLs (all envs) ──────────
+	// ── Step 12: Ensure shared manifest repo + commit service manifests ────────
+	// Option B: one repo per application (e.g. restaurant-pos-k8s), branch per
+	// environment (dev/uat/prod), service subdirectory per service (api-gateway/).
+	// Only the dev branch is created here; uat/prod branches are created lazily
+	// by promoteImage in the Jenkins pipeline when the first promotion runs.
 	if err := o.step(ctx, projectID, 12, func() error {
 		_, e := o.git.EnsureRepo(ctx, plugin.CreateRepoInput{
-			Name:          p.Slug,
-			Description:   p.Name + " K8s manifests — managed by DevPortal",
+			Name:          manifestRepoName,
+			Description:   appSlug + " K8s manifests — managed by DevPortal",
 			NamespacePath: manifestGroup,
 			Visibility:    "private",
-			DefaultBranch: "main",
+			DefaultBranch: "dev",
 		})
 		if e != nil {
 			return e
 		}
 
-		var files []plugin.CommitFile
-		for _, envName := range []string{"dev", "uat", "prod"} {
-			namespace := p.Slug + "-" + envName
-			ingressHost := p.Slug + "-" + envName + "." + o.cfg.IngressBaseDomain
-			image := strings.TrimRight(o.cfg.RegistryURL, "/") + "/" + p.HarborProject + "/" + p.Slug + ":latest"
+		// Build manifests for the dev environment only; commit into the service
+		// subdirectory on the dev branch. uat/prod manifests are seeded by
+		// promoteImage at pipeline promotion time.
+		namespace := p.Slug + "-dev"
+		ingressHost := p.Slug + "-dev." + o.cfg.IngressBaseDomain
+		image := strings.TrimRight(o.cfg.RegistryURL, "/") + "/" + p.HarborProject + "/" + p.Slug + ":latest"
 
-			ms := o.templates.Manifests(tmpl.ManifestInput{
-				AppName:     p.Slug,
-				Namespace:   namespace,
-				Environment: envName,
-				Image:       image,
-				IngressHost: ingressHost,
-			})
+		ms := o.templates.Manifests(tmpl.ManifestInput{
+			AppName:     p.Slug,
+			Namespace:   namespace,
+			Environment: "dev",
+			Image:       image,
+			IngressHost: ingressHost,
+		})
 
-			dir := envName + "/"
-			files = append(files,
-				plugin.CommitFile{Path: dir + "namespace.yaml", Content: ms.Namespace, Action: "upsert"},
-				plugin.CommitFile{Path: dir + "deployment.yaml", Content: ms.Deployment, Action: "upsert"},
-				plugin.CommitFile{Path: dir + "service.yaml", Content: ms.Service, Action: "upsert"},
-				plugin.CommitFile{Path: dir + "ingress.yaml", Content: ms.Ingress, Action: "upsert"},
-			)
-			if ms.HPA != "" {
-				files = append(files, plugin.CommitFile{Path: dir + "hpa.yaml", Content: ms.HPA, Action: "upsert"})
-			}
+		// Service subdirectory: e.g. api-gateway/deployment.yaml
+		dir := p.Slug + "/"
+		files := []plugin.CommitFile{
+			{Path: dir + "namespace.yaml", Content: ms.Namespace, Action: "upsert"},
+			{Path: dir + "deployment.yaml", Content: ms.Deployment, Action: "upsert"},
+			{Path: dir + "service.yaml", Content: ms.Service, Action: "upsert"},
+			{Path: dir + "ingress.yaml", Content: ms.Ingress, Action: "upsert"},
+		}
+		if ms.HPA != "" {
+			files = append(files, plugin.CommitFile{Path: dir + "hpa.yaml", Content: ms.HPA, Action: "upsert"})
 		}
 
 		return o.git.CommitFiles(ctx, plugin.CommitFilesInput{
 			RepoPath:    manifestRepoPath,
-			Branch:      "main",
-			Message:     "chore: DevPortal bootstrap — K8s manifests for dev / uat / prod",
+			Branch:      "dev",
+			Message:     "chore: DevPortal bootstrap — " + p.Slug + " dev manifests",
 			AuthorName:  o.cfg.BotName,
 			AuthorEmail: o.cfg.BotEmail,
 			Files:       files,
@@ -351,8 +424,8 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 				Name:           appName,
 				Namespace:      namespace,
 				RepoURL:        manifestRepoURL,
-				Path:           envName + "/",
-				TargetRevision: "main",
+				Path:           p.Slug + "/", // service subdirectory (Option B)
+				TargetRevision: envName,       // branch per environment: dev / uat / prod
 				AutoSync:       true,
 			}); e != nil {
 				return fmt.Errorf("argocd %s: %w", envName, e)
@@ -385,7 +458,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 					DBName:        &dbName,
 					DBUsername:    &dbUser,
 					IngressURL:    &url,
-					ManifestPath:  strPtr(envName + "/"),
+					ManifestPath:  strPtr(p.Slug + "/"),
 				})
 				_ = o.database.UpdateEnvironmentStatus(ctx, env.ID, "active")
 			}

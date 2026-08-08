@@ -34,17 +34,20 @@ func (db *DB) CreateProject(ctx context.Context, p Project) (*Project, error) {
 	const q = `
 		INSERT INTO projects (
 			team_id, name, slug, git_repo_url, harbor_project,
-			jenkins_folder, build_tool, notification_email, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			jenkins_folder, build_tool, notification_email, created_by, application_id,
+			app_timezone, staging_url, k8s_manifest_paths
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING
 			id, team_id, name, slug, git_repo_url, harbor_project,
 			jenkins_folder, build_tool, notification_email,
-			defectdojo_product_id, status, generated_jenkinsfile,
-			manifest_repo_url, app_repo_url, created_at, created_by
+			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
+			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
+			app_timezone, staging_url, k8s_manifest_paths
 	`
 	rows, err := db.pool.Query(ctx, q,
 		p.TeamID, p.Name, p.Slug, p.GitRepoURL, p.HarborProject,
-		p.JenkinsFolder, p.BuildTool, p.NotificationEmail, p.CreatedBy,
+		p.JenkinsFolder, p.BuildTool, p.NotificationEmail, p.CreatedBy, p.ApplicationID,
+		p.AppTimezone, p.StagingURL, p.K8sManifestPaths,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("db.CreateProject: query: %w", err)
@@ -62,8 +65,9 @@ func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*Project, error) {
 		SELECT
 			id, team_id, name, slug, git_repo_url, harbor_project,
 			jenkins_folder, build_tool, notification_email,
-			defectdojo_product_id, status, generated_jenkinsfile,
-			manifest_repo_url, app_repo_url, created_at, created_by
+			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
+			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
+			app_timezone, staging_url, k8s_manifest_paths
 		FROM projects
 		WHERE id = $1
 	`
@@ -84,8 +88,9 @@ func (db *DB) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]Proje
 		SELECT
 			id, team_id, name, slug, git_repo_url, harbor_project,
 			jenkins_folder, build_tool, notification_email,
-			defectdojo_product_id, status, generated_jenkinsfile,
-			manifest_repo_url, app_repo_url, created_at, created_by
+			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
+			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
+			app_timezone, staging_url, k8s_manifest_paths
 		FROM projects
 		WHERE team_id = $1
 		ORDER BY created_at DESC
@@ -99,6 +104,89 @@ func (db *DB) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]Proje
 		return nil, fmt.Errorf("db.ListProjectsByTeam: scan: %w", err)
 	}
 	return projects, nil
+}
+
+// ArchiveProject sets a project's status to "archived" (soft-delete).
+// The external resources (repo, Jenkins job, Harbor project) are kept intact.
+func (db *DB) ArchiveProject(ctx context.Context, id uuid.UUID) error {
+	tag, err := db.pool.Exec(ctx,
+		`UPDATE projects SET status = 'archived' WHERE id = $1`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("db.ArchiveProject: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db.ArchiveProject: %w", pgx.ErrNoRows)
+	}
+	return nil
+}
+
+// RenameProject updates the display name of a project (slug stays the same).
+func (db *DB) RenameProject(ctx context.Context, id uuid.UUID, name string) (*Project, error) {
+	const q = `
+		UPDATE projects SET name = $1 WHERE id = $2
+		RETURNING id, team_id, name, slug, git_repo_url, harbor_project,
+		          jenkins_folder, build_tool, notification_email,
+		          defectdojo_product_id, status, generated_jenkinsfile,
+		          manifest_repo_url, app_repo_url, created_at, created_by, application_id,
+		          app_timezone, staging_url, k8s_manifest_paths
+	`
+	rows, err := db.pool.Query(ctx, q, name, id)
+	if err != nil {
+		return nil, fmt.Errorf("db.RenameProject: query: %w", err)
+	}
+	project, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[Project])
+	if err != nil {
+		return nil, fmt.Errorf("db.RenameProject: scan: %w", err)
+	}
+	return project, nil
+}
+
+// UpdateService updates the editable fields of a service before or after
+// provisioning. Slug is intentionally excluded — it is baked into the Gitea
+// repo name and Jenkins job name and cannot change without external cleanup.
+func (db *DB) UpdateService(ctx context.Context, id uuid.UUID,
+	name, buildTool, notificationEmail, appTimezone, stagingURL, k8sManifestPaths string,
+) (*Project, error) {
+	const q = `
+		UPDATE projects SET
+			name                = $1,
+			build_tool          = $2,
+			notification_email  = $3,
+			app_timezone        = $4,
+			staging_url         = NULLIF($5, ''),
+			k8s_manifest_paths  = $6
+		WHERE id = $7
+		RETURNING id, team_id, name, slug, git_repo_url, harbor_project,
+		          jenkins_folder, build_tool, notification_email,
+		          defectdojo_product_id, status, generated_jenkinsfile,
+		          manifest_repo_url, app_repo_url, created_at, created_by, application_id,
+		          app_timezone, staging_url, k8s_manifest_paths
+	`
+	rows, err := db.pool.Query(ctx, q, name, buildTool, notificationEmail, appTimezone, stagingURL, k8sManifestPaths, id)
+	if err != nil {
+		return nil, fmt.Errorf("db.UpdateService: query: %w", err)
+	}
+	p, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[Project])
+	if err != nil {
+		return nil, fmt.Errorf("db.UpdateService: %w", err)
+	}
+	return p, nil
+}
+
+// ResetProvisioningSteps clears all step results so the orchestrator can
+// re-run them from scratch. Called before every reprovision attempt.
+func (db *DB) ResetProvisioningSteps(ctx context.Context, projectID uuid.UUID) error {
+	_, err := db.pool.Exec(ctx, `
+		UPDATE provisioning_steps
+		SET status = 'pending', detail = '', started_at = NULL, finished_at = NULL
+		WHERE project_id = $1
+	`, projectID)
+	if err != nil {
+		return fmt.Errorf("db.ResetProvisioningSteps: %w", err)
+	}
+	return nil
 }
 
 // UpdateProjectStatus sets the overall provisioning status of a project.
@@ -131,6 +219,18 @@ func (db *DB) SetDefectDojoProductID(ctx context.Context, id uuid.UUID, productI
 	_, err := db.pool.Exec(ctx, q, productID, id)
 	if err != nil {
 		return fmt.Errorf("db.SetDefectDojoProductID: %w", err)
+	}
+	return nil
+}
+
+// SetDefectDojoEngagementID records the DefectDojo engagement ID after the
+// CI/CD engagement is created in Step 11. This ID is written back into the
+// Jenkinsfile so Jenkins can upload scan results to the correct engagement.
+func (db *DB) SetDefectDojoEngagementID(ctx context.Context, id uuid.UUID, engagementID int) error {
+	const q = `UPDATE projects SET defectdojo_engagement_id = $1 WHERE id = $2`
+	_, err := db.pool.Exec(ctx, q, engagementID, id)
+	if err != nil {
+		return fmt.Errorf("db.SetDefectDojoEngagementID: %w", err)
 	}
 	return nil
 }

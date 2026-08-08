@@ -1,0 +1,322 @@
+library identifier: 'jenkins-shared-library@main', retriever: modernSCM([
+    $class: 'GitSCMSource',
+    remote: '%%%SHARED_LIBRARY_URL%%%',
+    credentialsId: '%%%GIT_CREDENTIALS_ID%%%',
+    traits: [[$class: 'jenkins.plugins.git.traits.BranchDiscoveryTrait']]
+])
+
+pipeline {
+    agent any
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '5', artifactNumToKeepStr: '0'))
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    // =========================================================================
+    // ↓↓↓ CHANGE THESE PER PROJECT — everything else stays the same ↓↓↓
+    // =========================================================================
+    environment {
+
+        // Project identity
+        PROJECT_NAME            = '%%%PROJECT_NAME%%%'
+        IMAGE_NAME              = '%%%IMAGE_NAME%%%'
+        HARBOR_PROJECT          = '%%%HARBOR_PROJECT%%%'
+        REGISTRY_URL            = '%%%REGISTRY_URL%%%'
+        REGISTRY_CREDENTIALS_ID = '%%%REGISTRY_CREDENTIALS_ID%%%'
+
+        // Notifications
+        NOTIFICATION_EMAIL = '%%%NOTIFICATION_EMAIL%%%'
+
+        // Source repo
+        GIT_REPO_URL       = '%%%GIT_REPO_URL%%%'
+        GIT_CREDENTIALS_ID = '%%%GIT_CREDENTIALS_ID%%%'
+        // BRANCH_NAME is set automatically by Jenkins Multibranch Pipeline — do not override
+
+        // K8s manifest repo (Option B: one repo per application, branch per env)
+        %%%K8S_MANIFEST_SECTION%%%
+
+        // Build tool: maven | npm | node | next | go | gradle | dotnet
+        %%%BUILD_TOOL_LINE%%%
+
+        // App config
+        APP_TIMEZONE = '%%%APP_TIMEZONE%%%'
+
+        // DefectDojo
+        DEFECTDOJO_URL           = '%%%DEFECTDOJO_URL%%%'
+        %%%DEFECTDOJO_ENGAGEMENT_SECTION%%%
+
+        // Dependency-Track — SBOM upload
+        DEPENDENCY_TRACK_URL = '%%%DEPENDENCY_TRACK_URL%%%'
+
+        // DAST — staging URL of this service on K8s cluster (leave empty to skip)
+        %%%STAGING_URL_SECTION%%%
+
+        // Auto-populated — do not edit
+        GIT_COMMIT      = sh(script: 'git rev-parse HEAD 2>/dev/null || echo unknown', returnStdout: true).trim()
+        GIT_AUTHOR      = sh(script: 'git log -1 --pretty=format:"%an" 2>/dev/null || echo unknown', returnStdout: true).trim()
+        APP_VERSION     = "1.0.${env.BUILD_NUMBER}"
+        RELEASE_VERSION = sh(script: "cat VERSION 2>/dev/null || echo 1.0.${env.BUILD_NUMBER}", returnStdout: true).trim()
+        BUILD_DATE_UTC  = sh(script: "date -u +'%Y-%m-%dT%H:%M:%SZ'", returnStdout: true).trim()
+    }
+    // =========================================================================
+    // ↑↑↑ END OF PER-PROJECT SECTION ↑↑↑
+    // =========================================================================
+
+    stages {
+
+        // ── Always: checkout ─────────────────────────────────────────────────
+
+        stage('Checkout and Git Info') {
+            steps {
+                script {
+                    checkoutAndGitInfo(
+                        repo: env.GIT_REPO_URL,
+                        credentialsId: env.GIT_CREDENTIALS_ID,
+                        branch: env.BRANCH_NAME
+                    )
+                }
+            }
+        }
+
+        stage('Send Start Notification') {
+            steps {
+                script {
+                    sendStartNotification(
+                        subject: "🚀 Pipeline Started: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        recipients: env.NOTIFICATION_EMAIL,
+                        triggeredBy: detectBuildTrigger()
+                    )
+                }
+            }
+        }
+
+        // ── Build stages — skipped on uat and prod branches ──────────────────
+        // Image is built exactly once on dev; promoted to uat/prod without rebuilding.
+
+        stage('Build Artifact') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script { buildArtifact() }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script {
+                    sonarSast(
+                        sonarServer: 'SonarQube Server',
+                        projectKey: "${env.IMAGE_NAME}",
+                        projectName: "${env.PROJECT_NAME}",
+                        waitForQualityGate: false,
+                        timeoutMinutes: 5
+                    )
+                }
+            }
+        }
+
+        stage('Dependency Check') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script {
+                    parallel(
+                        "OWASP Dependency Check": {
+                            owaspDependencyCheck(failOnCVSS: 0)
+                        },
+                        "OSV Scanner": {
+                            osvScanner(failOnCritical: false)
+                        }
+                    )
+                }
+            }
+        }
+
+        stage('Vulnerability Scan - Docker') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script { vulnScanDocker() }
+            }
+        }
+
+        stage('Build Docker Image and Publish') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script {
+                    // Tag: plain build number on dev (e.g. api-gateway:42).
+                    // Harbor retention keeps uat-* and version tags; dev tags can be GC'd.
+                    def result = buildDockerImageAndPush(
+                        imageName:              env.IMAGE_NAME,
+                        imageTag:               env.BUILD_NUMBER,
+                        harborProject:          env.HARBOR_PROJECT,
+                        registryUrl:            env.REGISTRY_URL,
+                        registryCredentialsId:  env.REGISTRY_CREDENTIALS_ID,
+                        pushToRegistry:         true,
+                        buildArgs: [
+                            GIT_AUTHOR  : env.GIT_AUTHOR,
+                            GIT_COMMIT  : env.GIT_COMMIT,
+                            BUILD_DATE  : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
+                            VERSION     : env.RELEASE_VERSION,
+                            APP_TIMEZONE: env.APP_TIMEZONE,
+                            APP_NAME    : env.PROJECT_NAME
+                        ]
+                    )
+                    env.FINAL_IMAGE_NAME = result.localImageName
+                }
+            }
+        }
+
+        stage('Sign Image') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script {
+                    signImage(
+                        registryUrl:   env.REGISTRY_URL,
+                        harborProject: env.HARBOR_PROJECT,
+                        imageName:     env.IMAGE_NAME,
+                        imageTag:      env.BUILD_NUMBER
+                    )
+                }
+            }
+        }
+
+        stage('Generate & Upload SBOM') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script {
+                    generateSbom(
+                        projectName:    env.IMAGE_NAME,
+                        projectVersion: env.APP_VERSION
+                    )
+                }
+            }
+        }
+
+        stage('Vulnerability Scan - Application Image') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script { vulnScanApplicationImage() }
+            }
+        }
+
+        stage('Publish Security Results') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script { publishToDefectDojo() }
+            }
+        }
+
+        stage('Update Dev Manifest') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script { k8sManifestScanAndUpdate() }
+            }
+        }
+
+        stage('DAST Scan') {
+            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+            steps {
+                script {
+                    dastScan(
+                        stagingUrl:  env.STAGING_URL,
+                        scanType:    'baseline',
+                        waitSeconds: 90
+                    )
+                }
+            }
+        }
+
+        // ── UAT promotion ─────────────────────────────────────────────────────
+        // Reads the image tag from the dev manifest, retags as uat-{devTag} so
+        // Harbor can apply a separate retention policy from dev tags.
+
+        stage('Promote to UAT') {
+            when { branch 'uat' }
+            steps {
+                script {
+                    promoteImage(
+                        fromBranch:  env.K8S_MANIFEST_BRANCH,
+                        toBranch:    env.K8S_MANIFEST_UAT_BRANCH,
+                        reTagPrefix: 'uat'
+                    )
+                }
+            }
+        }
+
+        // ── Production stages ─────────────────────────────────────────────────
+        // Reads the image tag from the uat manifest, retags as the VERSION file
+        // value — a named release tag that Harbor retention never deletes.
+
+        stage('Production Approval') {
+            when { branch 'prod' }
+            steps {
+                script {
+                    productionApproval(
+                        releaseVersion: env.RELEASE_VERSION,
+                        recipients:     env.NOTIFICATION_EMAIL,
+                        timeoutMinutes: 30
+                    )
+                }
+            }
+        }
+
+        stage('Promote to Production') {
+            when { branch 'prod' }
+            steps {
+                script {
+                    promoteImage(
+                        fromBranch: env.K8S_MANIFEST_UAT_BRANCH,
+                        toBranch:   env.K8S_MANIFEST_PROD_BRANCH,
+                        reTagAs:    env.RELEASE_VERSION
+                    )
+                }
+            }
+        }
+    }
+
+    post {
+
+        always {
+            script {
+                if (fileExists('target/dependency-check-report.xml')) {
+                    dependencyCheckPublisher(
+                        pattern: 'target/dependency-check-report.xml',
+                        failedTotalCritical: 0,
+                        unstableTotalHigh: 10
+                    )
+                } else {
+                    echo "ℹ️  No dependency-check-report.xml — skipping (non-Maven project)"
+                }
+            }
+        }
+
+        success {
+            script {
+                sendSuccessNotification(
+                    recipients: env.NOTIFICATION_EMAIL,
+                    triggeredBy: detectBuildTrigger()
+                )
+            }
+        }
+
+        failure {
+            script {
+                sendFailureNotification(
+                    recipients: env.NOTIFICATION_EMAIL,
+                    triggeredBy: detectBuildTrigger()
+                )
+            }
+        }
+
+        cleanup {
+            cleanWs(
+                cleanWhenSuccess:  true,
+                cleanWhenFailure:  false,
+                cleanWhenAborted:  true,
+                notFailBuild:      true
+            )
+        }
+    }
+}

@@ -3,307 +3,210 @@
 // Contact: saidlabiybm@gmail.com
 // ---------------------------------------------------------------------------
 
-// Package template generates Jenkinsfiles and Kubernetes manifests for
-// provisioned projects. All output is parameterized — no hardcoded URLs
-// or registry values. Every URL comes from the config injected at startup.
+// Package template renders Jenkinsfiles and Dockerfiles for provisioned services.
+//
+// Architecture:
+//   - Default templates live in defaults/ as real files (syntax-highlighted,
+//     diffable, copy-pasteable). They are compiled into the binary via go:embed
+//     so there is no runtime file dependency.
+//   - At startup, defaults are seeded into the pipeline_templates DB table using
+//     ON CONFLICT DO NOTHING — admin edits in the DB are always preserved.
+//   - The orchestrator reads the current template from DB at provision time,
+//     then calls RenderJenkinsfile to substitute %%%MARKER%%% tokens.
 package template
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 
 	"github.com/ALabiyb/platform_devportal/internal/config"
 )
 
-// Generator holds config values that are baked into every generated artifact.
+// ── Embedded default files ────────────────────────────────────────────────────
+// Each file is a real file in defaults/ — edit it directly, no Go rebuild needed
+// to change what gets seeded (the binary embeds the file at compile time).
+
+//go:embed defaults/Jenkinsfile.template
+var defaultJenkinsfile string
+
+//go:embed defaults/maven.Dockerfile
+var dockerfileMaven string
+
+//go:embed defaults/gradle.Dockerfile
+var dockerfileGradle string
+
+//go:embed defaults/go.Dockerfile
+var dockerfileGo string
+
+//go:embed defaults/nodejs-express.Dockerfile
+var dockerfileNodejs string
+
+//go:embed defaults/nextjs.Dockerfile
+var dockerfileNextjs string
+
+//go:embed defaults/python-fastapi.Dockerfile
+var dockerfilePython string
+
+//go:embed defaults/dotnet.Dockerfile
+var dockerfileDotnet string
+
+//go:embed defaults/flutter-web.Dockerfile
+var dockerfileFlutter string
+
+//go:embed defaults/auto.Dockerfile
+var dockerfileAuto string
+
+// ── Generator ─────────────────────────────────────────────────────────────────
+
+// Generator holds the config values baked into every rendered artifact.
 type Generator struct {
 	cfg *config.Config
 }
 
-// New constructs a Generator from the loaded config.
+// New constructs a Generator.
 func New(cfg *config.Config) *Generator {
 	return &Generator{cfg: cfg}
 }
 
-// JenkinsfileInput is the per-project data merged into the Jenkinsfile template.
+// ── Input / rendering ─────────────────────────────────────────────────────────
+
+// JenkinsfileInput carries the per-service values substituted into the template.
+// Infrastructure values (registry URL, credentials IDs) come from cfg, not here.
 type JenkinsfileInput struct {
-	AppName           string // e.g. "payment-service"
-	HarborProject     string // e.g. "backend/payment-service" (Harbor project path)
-	BuildTool         string // "maven" | "gradle" | "go" | "nodejs-express" | "nextjs" | "python-fastapi" | "dotnet"
-	NotificationEmail string // failure notification recipient
+	AppName            string // service slug, e.g. "api-gateway"
+	HarborProject      string // e.g. "restaurant-pos-system/api-gateway"
+	BuildTool          string // "maven" | "gradle" | "go" | etc.
+	NotificationEmail  string
+	GitRepoURL         string // filled after step 1 (repo creation)
+	ManifestRepoURL    string // e.g. "http://gitea:3000/nexbridge/restaurant-pos-k8s.git"
+	AppTimezone        string // e.g. "Africa/Dar_es_Salaam"
+	StagingURL         string // optional — leave empty to skip DAST
+	K8sManifestPaths   string // e.g. "api-gateway/deployment.yaml"
+	EngagementID       int    // DefectDojo engagement ID (0 = not yet created)
 }
 
-// Jenkinsfile generates a declarative Jenkinsfile for the given project.
-// The generated file uses the shared library loaded from cfg.SharedLibraryURL
-// and drives build, test, image push, and manifest update stages.
-func (g *Generator) Jenkinsfile(input JenkinsfileInput) string {
-	build, test, sonarKey := buildCommands(input.BuildTool)
+// RenderJenkinsfile substitutes all %%%MARKER%%% tokens in templateStr.
+// templateStr comes from the pipeline_templates DB row (editable at runtime).
+// Infrastructure markers come from cfg; per-project markers come from input.
+func (g *Generator) RenderJenkinsfile(templateStr string, input JenkinsfileInput) string {
+	markers := map[string]string{
+		// Per-project — filled at service creation time
+		"%%%PROJECT_NAME%%%":                  input.AppName,
+		"%%%IMAGE_NAME%%%":                    input.AppName,
+		"%%%HARBOR_PROJECT%%%":                input.HarborProject,
+		"%%%NOTIFICATION_EMAIL%%%":            input.NotificationEmail,
+		"%%%GIT_REPO_URL%%%":                  input.GitRepoURL,
+		"%%%APP_TIMEZONE%%%":                  timezone(input.AppTimezone),
+		"%%%K8S_MANIFEST_SECTION%%%":          k8sSection(input, g.cfg.GitCredentialsID),
+		"%%%BUILD_TOOL_LINE%%%":               buildToolLine(input.BuildTool),
+		"%%%DEFECTDOJO_ENGAGEMENT_SECTION%%%": engagementSection(input.EngagementID),
+		"%%%STAGING_URL_SECTION%%%":           stagingSection(input.StagingURL),
 
-	return fmt.Sprintf(`// Generated by DevPortal — do not edit manually.
-// Re-generate via DevPortal if build tool or pipeline config changes.
-@Library('devops-shared-lib@main') _
+		// Infrastructure — from .env, never from form input
+		"%%%REGISTRY_URL%%%":            g.cfg.RegistryURL,
+		"%%%REGISTRY_CREDENTIALS_ID%%%": g.cfg.RegistryCredentialsID,
+		"%%%GIT_CREDENTIALS_ID%%%":      g.cfg.GitCredentialsID,
+		"%%%SHARED_LIBRARY_URL%%%":      g.cfg.SharedLibraryURL,
+		"%%%DEFECTDOJO_URL%%%":          g.cfg.DefectDojoURL,
+		"%%%DEPENDENCY_TRACK_URL%%%":    g.cfg.DependencyTrackURL,
+	}
 
-pipeline {
-    agent any
-
-    environment {
-        APP_NAME              = '%s'
-        REGISTRY              = '%s'
-        IMAGE                 = "${REGISTRY}/%s/${APP_NAME}"
-        REGISTRY_CREDENTIALS  = '%s'
-        GIT_CREDENTIALS       = '%s'
-        DEPENDENCY_TRACK_URL  = '%s'
-        SONAR_PROJECT_KEY     = '%s'
-        NOTIFY_EMAIL          = '%s'
-    }
-
-    options {
-        timestamps()
-        disableConcurrentBuilds()
-        timeout(time: 60, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '20'))
-    }
-
-    stages {
-        stage('Checkout') {
-            steps { checkout scm }
-        }
-
-        stage('Build & Unit Test') {
-            steps {
-                sh '%s'
-            }
-            post {
-                always { junit allowEmptyResults: true, testResults: '**/surefire-reports/*.xml, **/test-results/**/*.xml' }
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('SonarQube') {
-                    sh '%s'
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        stage('OWASP Dependency Check') {
-            steps {
-                sh 'dependency-check --project "${APP_NAME}" --scan . --format XML --out dependency-check-report.xml || true'
-                dependencyCheckPublisher pattern: 'dependency-check-report.xml'
-            }
-        }
-
-        stage('Build Docker Image') {
-            when { anyOf { branch 'main'; branch 'develop' } }
-            steps {
-                sh "docker build -t ${IMAGE}:${GIT_COMMIT[0..7]} -t ${IMAGE}:latest ."
-            }
-        }
-
-        stage('Push to Harbor') {
-            when { anyOf { branch 'main'; branch 'develop' } }
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: env.REGISTRY_CREDENTIALS,
-                    usernameVariable: 'HARBOR_USER',
-                    passwordVariable: 'HARBOR_PASS'
-                )]) {
-                    sh """
-                        docker login ${REGISTRY} -u "${HARBOR_USER}" -p "${HARBOR_PASS}"
-                        docker push ${IMAGE}:${GIT_COMMIT[0..7]}
-                        docker push ${IMAGE}:latest
-                    """
-                }
-            }
-        }
-
-        stage('Update Manifest') {
-            when { branch 'main' }
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: env.GIT_CREDENTIALS,
-                    usernameVariable: 'GIT_USER',
-                    passwordVariable: 'GIT_PASS'
-                )]) {
-                    sh """
-                        git config user.email "devportal@nexbridge.internal"
-                        git config user.name  "DevPortal Bot"
-                        sed -i "s|image: .*|image: ${IMAGE}:${GIT_COMMIT[0..7]}|g" k8s/dev/deployment.yaml
-                        git add k8s/
-                        git diff --staged --quiet || git commit -m "chore: update image to ${GIT_COMMIT[0..7]} [skip ci]"
-                        git push
-                    """
-                }
-            }
-        }
-    }
-
-    post {
-        failure {
-            mail to: env.NOTIFY_EMAIL,
-                 subject: "FAILED: ${env.APP_NAME} — build #${env.BUILD_NUMBER}",
-                 body: "Build failed: ${env.BUILD_URL}"
-        }
-        success {
-            echo "Pipeline succeeded for ${APP_NAME}"
-        }
-    }
+	result := templateStr
+	for marker, value := range markers {
+		result = strings.ReplaceAll(result, marker, value)
+	}
+	return result
 }
-`,
-		input.AppName,
-		g.cfg.RegistryURL,
-		input.HarborProject,
-		g.cfg.RegistryCredentialsID,
-		g.cfg.GitCredentialsID,
-		g.cfg.DependencyTrackURL,
-		sonarKey,
-		input.NotificationEmail,
-		build,
-		test,
+
+// ── Marker helpers ────────────────────────────────────────────────────────────
+
+func timezone(tz string) string {
+	if tz == "" {
+		return "Africa/Dar_es_Salaam"
+	}
+	return tz
+}
+
+func buildToolLine(buildTool string) string {
+	if buildTool == "" || buildTool == "auto" {
+		return "// BUILD_TOOL auto-detected from project files (pom.xml / package.json / go.mod)"
+	}
+	return fmt.Sprintf("BUILD_TOOL = '%s'", buildTool)
+}
+
+func engagementSection(id int) string {
+	if id > 0 {
+		return fmt.Sprintf("DEFECTDOJO_ENGAGEMENT_ID = '%d'", id)
+	}
+	return "// DEFECTDOJO_ENGAGEMENT_ID = ''  // set after DevPortal Step 11 completes"
+}
+
+func stagingSection(stagingURL string) string {
+	if stagingURL != "" {
+		return fmt.Sprintf("STAGING_URL = '%s'", stagingURL)
+	}
+	return "// STAGING_URL = ''  // set a staging URL to enable DAST scanning"
+}
+
+func k8sSection(input JenkinsfileInput, gitCredID string) string {
+	paths := input.K8sManifestPaths
+	if paths == "" {
+		paths = input.AppName + "/deployment.yaml"
+	}
+	if input.ManifestRepoURL != "" {
+		return fmt.Sprintf(
+			"K8S_MANIFEST_REPO_URL       = '%s'\n"+
+				"        K8S_MANIFEST_CREDENTIALS_ID = '%s'\n"+
+				"        K8S_MANIFEST_BRANCH         = 'dev'\n"+
+				"        K8S_MANIFEST_UAT_BRANCH     = 'uat'\n"+
+				"        K8S_MANIFEST_PROD_BRANCH    = 'prod'\n"+
+				"        K8S_MANIFEST_PATHS          = '%s'",
+			input.ManifestRepoURL, gitCredID, paths,
+		)
+	}
+	return fmt.Sprintf(
+		"// K8S_MANIFEST_REPO_URL       = ''  // devportal creates this at step 12\n"+
+			"        // K8S_MANIFEST_CREDENTIALS_ID = '%s'",
+		gitCredID,
 	)
 }
 
-// buildCommands returns the shell build command, test/analysis command, and
-// SonarQube project key suffix for the given build tool.
-func buildCommands(buildTool string) (build, sonarAnalyze, sonarKey string) {
+// ── Default seed data ─────────────────────────────────────────────────────────
+
+// DefaultJenkinsfileTemplate returns the shared pipeline-init Jenkinsfile template.
+// Called only to seed pipeline_templates on first run.
+func DefaultJenkinsfileTemplate() string {
+	return defaultJenkinsfile
+}
+
+// DefaultDockerfile returns the production Dockerfile for a build tool.
+// Called only to seed pipeline_templates on first run.
+func DefaultDockerfile(buildTool string) string {
 	switch strings.ToLower(buildTool) {
 	case "gradle":
-		return "./gradlew clean build -x test",
-			"./gradlew sonarqube",
-			"${APP_NAME}"
+		return dockerfileGradle
 	case "go":
-		return "go build -v ./...",
-			"go test -v -coverprofile=coverage.out ./... && sonar-scanner",
-			"${APP_NAME}"
+		return dockerfileGo
 	case "nodejs-express", "nodejs":
-		return "npm ci && npm run build --if-present",
-			"npm test -- --watchAll=false && sonar-scanner",
-			"${APP_NAME}"
+		return dockerfileNodejs
 	case "nextjs":
-		return "npm ci && npm run build",
-			"npm test -- --watchAll=false && sonar-scanner",
-			"${APP_NAME}"
+		return dockerfileNextjs
 	case "python-fastapi", "python":
-		return "pip install -r requirements.txt",
-			"pytest --junitxml=test-results/results.xml && sonar-scanner",
-			"${APP_NAME}"
+		return dockerfilePython
 	case "dotnet":
-		return "dotnet build --configuration Release",
-			"dotnet test --configuration Release --logger trx && sonar-scanner",
-			"${APP_NAME}"
-	default: // maven and auto
-		return "mvn clean package -DskipTests -B",
-			"mvn sonar:sonar -Dsonar.projectKey=${SONAR_PROJECT_KEY} -B",
-			"${APP_NAME}"
+		return dockerfileDotnet
+	case "flutter-web":
+		return dockerfileFlutter
+	default: // maven, auto
+		return dockerfileAuto
 	}
 }
 
-// Dockerfile returns a production-ready multi-stage Dockerfile for the build tool.
-// Committed to the source repo during provisioning step 2.
-func Dockerfile(buildTool string) string {
-	switch strings.ToLower(buildTool) {
-	case "gradle":
-		return `FROM gradle:8-jdk21-alpine AS builder
-WORKDIR /app
-COPY build.gradle settings.gradle ./
-RUN gradle dependencies --no-daemon
-COPY src ./src
-RUN gradle clean bootJar --no-daemon
-
-FROM eclipse-temurin:21-jre-alpine
-WORKDIR /app
-COPY --from=builder /app/build/libs/*.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java","-jar","app.jar"]
-`
-	case "go":
-		return `FROM golang:1.23-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o app .
-
-FROM gcr.io/distroless/static-debian12
-WORKDIR /app
-COPY --from=builder /app/app .
-EXPOSE 8080
-ENTRYPOINT ["/app/app"]
-`
-	case "nodejs-express", "nodejs":
-		return `FROM node:20-alpine AS deps
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-
-FROM node:20-alpine
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-EXPOSE 3000
-CMD ["node","index.js"]
-`
-	case "nextjs":
-		return `FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-FROM node:20-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-EXPOSE 3000
-CMD ["npx","next","start"]
-`
-	case "python-fastapi", "python":
-		return `FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-EXPOSE 8000
-CMD ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
-`
-	case "dotnet":
-		return `FROM mcr.microsoft.com/dotnet/sdk:8.0 AS builder
-WORKDIR /app
-COPY *.csproj ./
-RUN dotnet restore
-COPY . .
-RUN dotnet publish -c Release -o /publish
-
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
-WORKDIR /app
-COPY --from=builder /publish .
-EXPOSE 8080
-ENTRYPOINT ["dotnet","App.dll"]
-`
-	default: // maven and auto
-		return `FROM maven:3.9-eclipse-temurin-21-alpine AS builder
-WORKDIR /app
-COPY pom.xml .
-RUN mvn dependency:go-offline -B
-COPY src ./src
-RUN mvn clean package -DskipTests -B
-
-FROM eclipse-temurin:21-jre-alpine
-WORKDIR /app
-COPY --from=builder /app/target/*.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java","-jar","app.jar"]
-`
+// SeedBuildTools returns all build tool keys that need a DB row.
+func SeedBuildTools() []string {
+	return []string{
+		"maven", "gradle", "go", "nodejs-express",
+		"nextjs", "python-fastapi", "dotnet", "flutter-web", "auto",
 	}
 }
