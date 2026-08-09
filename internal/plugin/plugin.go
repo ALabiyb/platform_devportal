@@ -35,8 +35,8 @@ var ErrNotImplemented = errors.New("plugin: not yet implemented")
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
-// GitProvider manages source code repositories, file commits, and webhooks.
-// Implemented by GitLabAdapter (Day 05). Gitea support planned for a later day.
+// GitProvider manages source code repositories, file commits, webhooks, and groups.
+// Implemented by GitLabAdapter. Gitea support planned for a later day.
 type GitProvider interface {
 	// EnsureRepo creates the repository if it does not exist, or returns the
 	// existing repo metadata if it does. Idempotent.
@@ -53,6 +53,17 @@ type GitProvider interface {
 	// EnsureProtectedBranch protects the given branch (prevents force-push,
 	// requires MR). Idempotent — no error if already protected.
 	EnsureProtectedBranch(ctx context.Context, repoPath, branch string) error
+
+	// EnsureGroup creates a GitLab group at the root level (parentPath="") or as
+	// a subgroup under parentPath. Returns the numeric group ID. Idempotent.
+	EnsureGroup(ctx context.Context, slug, parentPath string) (int, error)
+
+	// AddGroupMember adds a user (found by email) to the GitLab group.
+	// accessLevel: 30=Developer, 40=Maintainer. Noop if user not in GitLab.
+	AddGroupMember(ctx context.Context, namespacePath, email string, accessLevel int) error
+
+	// RemoveGroupMember removes a user (found by email) from the GitLab group.
+	RemoveGroupMember(ctx context.Context, namespacePath, email string) error
 }
 
 // CIProvider manages CI pipeline jobs and folders.
@@ -74,8 +85,8 @@ type CIProvider interface {
 // Implemented by HarborAdapter (Day 07).
 type RegistryProvider interface {
 	// EnsureProject creates a Harbor project (image namespace) if it does not
-	// exist. Idempotent.
-	EnsureProject(ctx context.Context, projectName string) error
+	// exist, then applies the security configuration. Idempotent.
+	EnsureProject(ctx context.Context, projectName string, cfg HarborProjectConfig) error
 
 	// EnsureRobotAccount creates a robot account with push+pull access to the
 	// project. Returns the credentials Jenkins uses to push images.
@@ -86,8 +97,9 @@ type RegistryProvider interface {
 // Implemented by DefectDojoAdapter (Day 07).
 type SecurityProvider interface {
 	// EnsureProduct creates a DefectDojo product (top-level container for all
-	// findings). Returns the product ID for subsequent engagement creation.
-	EnsureProduct(ctx context.Context, name, description string) (int, error)
+	// findings), configures SLA deadlines, and assigns product members.
+	// Returns the product ID for subsequent engagement creation.
+	EnsureProduct(ctx context.Context, name, description string, cfg ProductConfig) (int, error)
 
 	// CreateEngagement creates a CI/CD engagement under the product.
 	// Each project environment gets its own engagement.
@@ -186,6 +198,30 @@ type CreateJobInput struct {
 type JobResult struct {
 	Path string // folder/jobName — used to build the webhook URL
 	URL  string // public Jenkins job URL shown to developers
+}
+
+// HarborProjectConfig carries the security settings applied to a Harbor project
+// at creation time (and kept in sync on re-provisioning).
+type HarborProjectConfig struct {
+	// AutoScanOnPush enables Harbor's built-in Trivy scanner on every docker push.
+	AutoScanOnPush bool
+	// RetainCount is the number of most-recently-pushed images to keep.
+	// 0 = no retention policy (images accumulate indefinitely).
+	RetainCount int
+}
+
+// ProductConfig carries security settings applied to a DefectDojo product
+// at service creation time.
+type ProductConfig struct {
+	// SLA deadline (days) per vulnerability severity.
+	// 0 = use DefectDojo's system-level default.
+	SLACriticalDays int
+	SLAHighDays     int
+	SLAMediumDays   int
+	SLALowDays      int
+	// MemberEmails is the list of user emails to add as Writers on this product.
+	// Users not found in DefectDojo are silently skipped (non-blocking).
+	MemberEmails []string
 }
 
 // RobotCredential is returned by RegistryProvider.EnsureRobotAccount.

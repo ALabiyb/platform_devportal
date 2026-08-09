@@ -17,6 +17,7 @@
 package db
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -150,6 +151,35 @@ type Project struct {
 	CreatedAt            time.Time  `db:"created_at"            json:"created_at"`
 	CreatedBy            *uuid.UUID `db:"created_by"            json:"created_by,omitempty"`
 	ApplicationID        *uuid.UUID `db:"application_id"        json:"application_id,omitempty"`
+	// Added in migration 007 — used in manifest templates.
+	Port       int    `db:"port"        json:"port"`
+	HealthPath string `db:"health_path" json:"health_path"`
+	// Added in migration 009 — DefectDojo SLA remediation deadlines (days).
+	VulnSLACritical int `db:"vuln_sla_critical" json:"vuln_sla_critical"`
+	VulnSLAHigh     int `db:"vuln_sla_high"     json:"vuln_sla_high"`
+	VulnSLAMedium   int `db:"vuln_sla_medium"   json:"vuln_sla_medium"`
+	VulnSLALow      int `db:"vuln_sla_low"      json:"vuln_sla_low"`
+}
+
+// ProjectMember links a user to a service with a role (lead | developer).
+// Controls DefectDojo product membership — only assigned users see that
+// service's findings.
+type ProjectMember struct {
+	ProjectID uuid.UUID  `db:"project_id" json:"project_id"`
+	UserID    uuid.UUID  `db:"user_id"    json:"user_id"`
+	Role      string     `db:"role"       json:"role"`
+	AddedAt   time.Time  `db:"added_at"   json:"added_at"`
+	AddedBy   *uuid.UUID `db:"added_by"   json:"added_by,omitempty"`
+}
+
+// ProjectMemberDetail is a join of project_members + users for API responses
+// and orchestrator use (email is needed to look up the user in DefectDojo).
+type ProjectMemberDetail struct {
+	ProjectID   uuid.UUID `db:"project_id"   json:"project_id"`
+	UserID      uuid.UUID `db:"user_id"      json:"user_id"`
+	Email       string    `db:"email"        json:"email"`
+	DisplayName string    `db:"display_name" json:"display_name"`
+	Role        string    `db:"role"         json:"role"`
 }
 
 // Environment is one deployment tier (dev / uat / prod) for a project.
@@ -163,9 +193,11 @@ type Environment struct {
 	ArgoCDAppName *string   `db:"argocd_app_name" json:"argocd_app_name,omitempty"`
 	DBName        *string   `db:"db_name"        json:"db_name,omitempty"`
 	DBUsername    *string   `db:"db_username"    json:"db_username,omitempty"`
-	ManifestPath  *string   `db:"manifest_path"  json:"manifest_path,omitempty"`
-	Status        string    `db:"status"         json:"status"`
-	CreatedAt     time.Time `db:"created_at"     json:"created_at"`
+	ManifestPath  *string    `db:"manifest_path"  json:"manifest_path,omitempty"`
+	Status        string     `db:"status"         json:"status"`
+	CreatedAt     time.Time  `db:"created_at"     json:"created_at"`
+	// Added in migration 007 — links environment to a registered cluster.
+	ClusterID     *uuid.UUID `db:"cluster_id"     json:"cluster_id,omitempty"`
 }
 
 // ProvisioningStep tracks one step of the 15-step provisioning orchestrator.
@@ -192,4 +224,83 @@ type AuditEvent struct {
 	ResourceID   *uuid.UUID `db:"resource_id"`    // references the affected row
 	Detail       []byte     `db:"detail"`         // JSON payload with action-specific context
 	CreatedAt    time.Time  `db:"created_at"`
+}
+
+// ── Platform Engineering — added in migration 007 ─────────────────────────────
+
+// Cluster is a registered Kubernetes cluster (one per environment tier per org).
+// Credentials are stored encrypted in workspace_credentials and referenced by ID.
+type Cluster struct {
+	ID          uuid.UUID  `db:"id"           json:"id"`
+	OrgID       uuid.UUID  `db:"org_id"       json:"org_id"`
+	Name        string     `db:"name"         json:"name"`
+	DisplayName string     `db:"display_name" json:"display_name"`
+	// Environment is the tier this cluster serves: "dev" | "uat" | "prod"
+	Environment             string     `db:"environment"                json:"environment"`
+	APIEndpoint             string     `db:"api_endpoint"               json:"api_endpoint"`
+	ArgoCDURL               string     `db:"argocd_url"                 json:"argocd_url"`
+	KubeconfigCredentialID  *uuid.UUID `db:"kubeconfig_credential_id"   json:"kubeconfig_credential_id,omitempty"`
+	ArgoCDCredentialID      *uuid.UUID `db:"argocd_credential_id"       json:"argocd_credential_id,omitempty"`
+	Status                  string     `db:"status"                     json:"status"`
+	CreatedAt               time.Time  `db:"created_at"                 json:"created_at"`
+	CreatedBy               *uuid.UUID `db:"created_by"                 json:"created_by,omitempty"`
+}
+
+// ClusterPlatformService holds per-cluster configuration for one shared infra
+// service (CNPG, Kafka, MinIO, Redis, RabbitMQ, Vault, Gateway).
+// Config is JSONB — each service_type has a different shape (see migration 007).
+type ClusterPlatformService struct {
+	ID          uuid.UUID       `db:"id"           json:"id"`
+	ClusterID   uuid.UUID       `db:"cluster_id"   json:"cluster_id"`
+	ServiceType string          `db:"service_type" json:"service_type"`
+	Enabled     bool            `db:"enabled"      json:"enabled"`
+	Config      json.RawMessage `db:"config"       json:"config"`
+	UpdatedAt   time.Time       `db:"updated_at"   json:"updated_at"`
+	UpdatedBy   *uuid.UUID      `db:"updated_by"   json:"updated_by,omitempty"`
+}
+
+// ManifestTemplate is one of the 15 standard K8s YAML templates.
+// Content holds the raw YAML with %%%MARKER%%% substitution tokens.
+// Same DB-editable design as PipelineTemplate.
+type ManifestTemplate struct {
+	Name        string     `db:"name"         json:"name"`
+	DisplayName string     `db:"display_name" json:"display_name"`
+	// Conditional controls when the template is rendered:
+	// "" = always, "cnpg" = only if postgres selected, "prod" = only for prod env, etc.
+	Conditional string     `db:"conditional"  json:"conditional"`
+	Content     string     `db:"content"      json:"content"`
+	UpdatedAt   time.Time  `db:"updated_at"   json:"updated_at"`
+	UpdatedBy   *uuid.UUID `db:"updated_by"   json:"updated_by,omitempty"`
+}
+
+// EnvironmentProfile holds resource limits and HPA settings for one environment
+// tier (dev / uat / prod). DevPortal substitutes these into Deployment templates.
+type EnvironmentProfile struct {
+	Name         string     `db:"name"          json:"name"`
+	CPURequest   string     `db:"cpu_request"   json:"cpu_request"`
+	MemRequest   string     `db:"mem_request"   json:"mem_request"`
+	CPULimit     string     `db:"cpu_limit"     json:"cpu_limit"`
+	MemLimit     string     `db:"mem_limit"     json:"mem_limit"`
+	Replicas     int        `db:"replicas"      json:"replicas"`
+	StorageClass string     `db:"storage_class" json:"storage_class"`
+	HPAEnabled   bool       `db:"hpa_enabled"   json:"hpa_enabled"`
+	HPAMin       int        `db:"hpa_min"       json:"hpa_min"`
+	HPAMax       int        `db:"hpa_max"       json:"hpa_max"`
+	CPUThreshold int        `db:"cpu_threshold" json:"cpu_threshold"`
+	MemThreshold int        `db:"mem_threshold" json:"mem_threshold"`
+	UpdatedAt    time.Time  `db:"updated_at"    json:"updated_at"`
+	UpdatedBy    *uuid.UUID `db:"updated_by"    json:"updated_by,omitempty"`
+}
+
+// ServiceInfraRequirement records one infrastructure selection made by a
+// developer at service-registration time (e.g. order-service → postgres).
+// One row per service per infra type (UNIQUE project_id, service_type).
+type ServiceInfraRequirement struct {
+	ID          uuid.UUID       `db:"id"           json:"id"`
+	ProjectID   uuid.UUID       `db:"project_id"   json:"project_id"`
+	ServiceType string          `db:"service_type" json:"service_type"`
+	Config      json.RawMessage `db:"config"       json:"config"`
+	Provisioned bool            `db:"provisioned"  json:"provisioned"`
+	VaultPath   *string         `db:"vault_path"   json:"vault_path,omitempty"`
+	CreatedAt   time.Time       `db:"created_at"   json:"created_at"`
 }

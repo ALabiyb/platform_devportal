@@ -115,9 +115,10 @@ func New(
 }
 
 // Provision runs the 15-step flow for input.Project.
-// Must be called in a goroutine — it blocks until provisioning completes or fails.
-// Uses context.Background() so it outlives the HTTP request that triggered it.
-func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
+// Blocks until provisioning completes or fails; always call from a goroutine or worker.
+// Returns a non-nil error if any step failed; the project status is already set to
+// "failed" in the DB before the error is returned.
+func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) error {
 	p := input.Project
 	projectID := p.ID
 	repoPath := input.GitNamespace + "/" + p.Slug
@@ -157,7 +158,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		return e
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// Persist resolved URLs to DB right after repo creation.
@@ -217,7 +218,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		})
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 3: Configure GitLab webhook → Jenkins ────────────────────────────
@@ -237,7 +238,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		})
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 4: Protect main branch ───────────────────────────────────────────
@@ -245,7 +246,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		return o.git.EnsureProtectedBranch(ctx, repoPath, "main")
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 5: Ensure Jenkins team folder ────────────────────────────────────
@@ -253,7 +254,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		return o.ci.EnsureFolder(ctx, p.JenkinsFolder)
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 6: Create Jenkins multibranch job ────────────────────────────────
@@ -270,7 +271,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		return e
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 7: Trigger Jenkins branch scan ───────────────────────────────────
@@ -278,15 +279,19 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		return o.ci.TriggerBranchScan(ctx, jobResult.Path)
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 8: Ensure Harbor registry project ────────────────────────────────
+	// Auto-scan and 10-image retention are applied to every service project.
 	if err := o.step(ctx, projectID, 8, func() error {
-		return o.registry.EnsureProject(ctx, p.HarborProject)
+		return o.registry.EnsureProject(ctx, p.HarborProject, plugin.HarborProjectConfig{
+			AutoScanOnPush: true,
+			RetainCount:    10,
+		})
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 9: Create Harbor robot account ───────────────────────────────────
@@ -296,16 +301,32 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		return e
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 10: Ensure DefectDojo product ────────────────────────────────────
+	// SLA values come from the project row (set by the lead at service creation).
+	// Member emails come from the project_members table so only assigned users
+	// can see this service's findings in DefectDojo.
 	var productID int
 	if err := o.step(ctx, projectID, 10, func() error {
+		members, _ := o.database.ListProjectMemberDetails(ctx, projectID)
+		emails := make([]string, 0, len(members))
+		for _, m := range members {
+			emails = append(emails, m.Email)
+		}
+
 		var e error
 		productID, e = o.security.EnsureProduct(ctx,
 			p.Name,
 			p.Name+" — managed by DevPortal",
+			plugin.ProductConfig{
+				SLACriticalDays: p.VulnSLACritical,
+				SLAHighDays:     p.VulnSLAHigh,
+				SLAMediumDays:   p.VulnSLAMedium,
+				SLALowDays:      p.VulnSLALow,
+				MemberEmails:    emails,
+			},
 		)
 		if e == nil {
 			_ = o.database.SetDefectDojoProductID(ctx, projectID, productID)
@@ -313,7 +334,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		return e
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 11: Create DefectDojo engagement ─────────────────────────────────
@@ -348,7 +369,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		})
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Step 12: Ensure shared manifest repo + commit service manifests ────────
@@ -405,7 +426,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 		})
 	}); err != nil {
 		o.fail(ctx, projectID)
-		return
+		return err
 	}
 
 	// ── Steps 13–15: ArgoCD + databases per environment ──────────────────────
@@ -465,7 +486,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 			return nil
 		}); err != nil {
 			o.fail(ctx, projectID)
-			return
+			return err
 		}
 	}
 
@@ -473,6 +494,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) {
 	_ = o.database.UpdateProjectStatus(ctx, projectID, "active")
 	o.hub.Broadcast(projectID, StepEvent{Done: true, Status: "done", Label: "Provisioning complete"})
 	slog.Info("provisioning complete", "project", p.Name, "id", projectID)
+	return nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

@@ -35,19 +35,22 @@ func (db *DB) CreateProject(ctx context.Context, p Project) (*Project, error) {
 		INSERT INTO projects (
 			team_id, name, slug, git_repo_url, harbor_project,
 			jenkins_folder, build_tool, notification_email, created_by, application_id,
-			app_timezone, staging_url, k8s_manifest_paths
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			app_timezone, staging_url, k8s_manifest_paths,
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING
 			id, team_id, name, slug, git_repo_url, harbor_project,
 			jenkins_folder, build_tool, notification_email,
 			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
-			app_timezone, staging_url, k8s_manifest_paths
+			app_timezone, staging_url, k8s_manifest_paths,
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
 	`
 	rows, err := db.pool.Query(ctx, q,
 		p.TeamID, p.Name, p.Slug, p.GitRepoURL, p.HarborProject,
 		p.JenkinsFolder, p.BuildTool, p.NotificationEmail, p.CreatedBy, p.ApplicationID,
 		p.AppTimezone, p.StagingURL, p.K8sManifestPaths,
+		p.VulnSLACritical, p.VulnSLAHigh, p.VulnSLAMedium, p.VulnSLALow,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("db.CreateProject: query: %w", err)
@@ -67,7 +70,8 @@ func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*Project, error) {
 			jenkins_folder, build_tool, notification_email,
 			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
-			app_timezone, staging_url, k8s_manifest_paths
+			app_timezone, staging_url, k8s_manifest_paths,
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
 		FROM projects
 		WHERE id = $1
 	`
@@ -386,4 +390,55 @@ func (db *DB) GetProvisioningSteps(ctx context.Context, projectID uuid.UUID) ([]
 		return nil, fmt.Errorf("db.GetProvisioningSteps: scan: %w", err)
 	}
 	return steps, nil
+}
+
+// ── Project Members ───────────────────────────────────────────────────────────
+
+// AddProjectMember assigns a user to a service with a role.
+// Upserts on conflict — re-assigning the same user updates their role.
+func (db *DB) AddProjectMember(ctx context.Context, projectID, userID uuid.UUID, role string, addedBy *uuid.UUID) error {
+	const q = `
+		INSERT INTO project_members (project_id, user_id, role, added_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role
+	`
+	_, err := db.pool.Exec(ctx, q, projectID, userID, role, addedBy)
+	if err != nil {
+		return fmt.Errorf("db.AddProjectMember: %w", err)
+	}
+	return nil
+}
+
+// RemoveProjectMember removes a user from a service.
+func (db *DB) RemoveProjectMember(ctx context.Context, projectID, userID uuid.UUID) error {
+	_, err := db.pool.Exec(ctx,
+		`DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`,
+		projectID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("db.RemoveProjectMember: %w", err)
+	}
+	return nil
+}
+
+// ListProjectMemberDetails returns all members of a service with their user
+// email and display name — used by the orchestrator to sync membership to
+// DefectDojo and by the API to render the member list.
+func (db *DB) ListProjectMemberDetails(ctx context.Context, projectID uuid.UUID) ([]ProjectMemberDetail, error) {
+	const q = `
+		SELECT pm.project_id, pm.user_id, u.email, u.display_name, pm.role
+		FROM project_members pm
+		JOIN users u ON u.id = pm.user_id
+		WHERE pm.project_id = $1
+		ORDER BY pm.added_at
+	`
+	rows, err := db.pool.Query(ctx, q, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("db.ListProjectMemberDetails: query: %w", err)
+	}
+	members, err := pgx.CollectRows(rows, pgx.RowToStructByName[ProjectMemberDetail])
+	if err != nil {
+		return nil, fmt.Errorf("db.ListProjectMemberDetails: scan: %w", err)
+	}
+	return members, nil
 }

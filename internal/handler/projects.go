@@ -11,7 +11,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -92,6 +91,25 @@ type createProjectRequest struct {
 	BuildTool         string    `json:"build_tool"`
 	GitNamespace      string    `json:"git_namespace"`      // GitLab group path, e.g. "nexbridge/backend"
 	NotificationEmail string    `json:"notification_email"`
+	// Optional per-service Jenkins / pipeline settings
+	AppTimezone      string `json:"app_timezone"`       // e.g. "Africa/Dar_es_Salaam"
+	StagingURL       string `json:"staging_url"`        // optional; enables DAST if set
+	K8sManifestPaths string `json:"k8s_manifest_paths"` // e.g. "04-deployment.yaml"
+	// Security SLA — days to remediate CVEs before DefectDojo marks SLA-breached.
+	// Defaults: Critical=7, High=30, Medium=90, Low=180.
+	VulnSLACritical int `json:"vuln_sla_critical"`
+	VulnSLAHigh     int `json:"vuln_sla_high"`
+	VulnSLAMedium   int `json:"vuln_sla_medium"`
+	VulnSLALow      int `json:"vuln_sla_low"`
+	// Members are the DevPortal users assigned to this service.
+	// Only assigned members will see this service's findings in DefectDojo.
+	Members []projectMemberInput `json:"members"`
+}
+
+// projectMemberInput is one entry in the members list of createProjectRequest.
+type projectMemberInput struct {
+	UserID uuid.UUID `json:"user_id"`
+	Role   string    `json:"role"` // "lead" | "developer"
 }
 
 // CreateProject validates the form, persists the project + environments +
@@ -123,8 +141,39 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tz := req.AppTimezone
+	if tz == "" {
+		tz = "Africa/Dar_es_Salaam"
+	}
+	manifestPaths := req.K8sManifestPaths
+	if manifestPaths == "" {
+		manifestPaths = "04-deployment.yaml"
+	}
+	var stagingURL *string
+	if req.StagingURL != "" {
+		stagingURL = &req.StagingURL
+	}
+
+	// Apply SLA defaults (OWASP remediation guidance).
+	slaC := req.VulnSLACritical
+	if slaC == 0 {
+		slaC = 7
+	}
+	slaH := req.VulnSLAHigh
+	if slaH == 0 {
+		slaH = 30
+	}
+	slaM := req.VulnSLAMedium
+	if slaM == 0 {
+		slaM = 90
+	}
+	slaL := req.VulnSLALow
+	if slaL == 0 {
+		slaL = 180
+	}
+
 	project, err := h.db.CreateProject(r.Context(), db.Project{
-		TeamID:            req.TeamID,
+		TeamID:            &req.TeamID,
 		Name:              req.Name,
 		Slug:              slug,
 		GitRepoURL:        "", // filled in after EnsureRepo in step 1
@@ -133,11 +182,30 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		BuildTool:         req.BuildTool,
 		NotificationEmail: req.NotificationEmail,
 		CreatedBy:         &user.ID,
+		AppTimezone:       tz,
+		StagingURL:        stagingURL,
+		K8sManifestPaths:  manifestPaths,
+		VulnSLACritical:   slaC,
+		VulnSLAHigh:       slaH,
+		VulnSLAMedium:     slaM,
+		VulnSLALow:        slaL,
 	})
 	if err != nil {
 		jsonError(w, "create project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Assign service members so the orchestrator can sync them to DefectDojo in step 10.
+	// Errors are non-fatal — provisioning continues without the member assignment.
+	for _, m := range req.Members {
+		role := m.Role
+		if role != "lead" && role != "developer" {
+			role = "developer"
+		}
+		_ = h.db.AddProjectMember(r.Context(), project.ID, m.UserID, role, &user.ID)
+	}
+	// Always add the creating user as lead if not already in the list.
+	_ = h.db.AddProjectMember(r.Context(), project.ID, user.ID, "lead", nil)
 
 	// Insert all 15 step rows upfront so the SSE stream can display them immediately.
 	steps := make([]db.ProvisioningStep, len(provisioner.StepLabels))
@@ -168,14 +236,15 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		envs = append(envs, env)
 	}
 
-	// Launch orchestrator in a detached goroutine — use Background context so
-	// the flow is not cancelled when the HTTP request context is done.
-	input := provisioner.ProvisionInput{
-		Project:      project,
-		Environments: envs,
+	// Enqueue the provisioning job. The embedded worker claims and runs the
+	// full 15-step orchestrator asynchronously. ApplicationSlug is empty here
+	// because CreateProject is the legacy standalone-project endpoint.
+	if _, err := h.db.EnqueueProvisioningJob(r.Context(), project.ID, db.JobPayload{
 		GitNamespace: req.GitNamespace,
+	}); err != nil {
+		jsonError(w, "enqueue provisioning: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	go h.orchestrator.Provision(context.Background(), input)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
