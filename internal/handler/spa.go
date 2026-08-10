@@ -43,9 +43,11 @@ func spaHandler(fsys fs.FS) http.HandlerFunc {
 		// Attempt to open the file from the embedded FS.
 		f, err := dist.Open(path)
 		if err != nil {
-			// File not found — fall back to index.html for React Router to handle.
+			// File not found — fall back to serving root so React Router handles routing.
+			// Cannot use "/index.html" here: http.FileServer redirects any path ending
+			// in "/index.html" to "./" which creates an infinite redirect loop.
 			r2 := r.Clone(r.Context())
-			r2.URL.Path = "/index.html"
+			r2.URL.Path = "/"
 			fileServer.ServeHTTP(w, r2)
 			return
 		}

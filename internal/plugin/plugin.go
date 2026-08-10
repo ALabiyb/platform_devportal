@@ -157,6 +157,7 @@ type RepoResult struct {
 type CommitFilesInput struct {
 	RepoPath    string       // full project path, e.g. "nexbridge/payment-service"
 	Branch      string       // target branch, e.g. "main"
+	StartBranch string       // if non-empty, create Branch from StartBranch before committing
 	Message     string       // commit message
 	AuthorName  string       // git author name
 	AuthorEmail string       // git author email

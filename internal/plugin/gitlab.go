@@ -139,6 +139,9 @@ func (g *GitLabAdapter) CommitFiles(ctx context.Context, input CommitFilesInput)
 		"author_email":   input.AuthorEmail,
 		"actions":        actions,
 	}
+	if input.StartBranch != "" {
+		payload["start_branch"] = input.StartBranch
+	}
 
 	endpoint := fmt.Sprintf("/projects/%d/repository/commits", project.ID)
 	err = g.do(ctx, http.MethodPost, endpoint, payload, nil)
@@ -244,6 +247,84 @@ func (g *GitLabAdapter) EnsureProtectedBranch(ctx context.Context, repoPath, bra
 	return nil
 }
 
+// EnsureGroup creates a GitLab group at root (parentPath="") or as subgroup.
+// Returns the numeric group ID. Idempotent — returns existing ID if found.
+func (g *GitLabAdapter) EnsureGroup(ctx context.Context, slug, parentPath string) (int, error) {
+	path := slug
+	if parentPath != "" {
+		path = parentPath + "/" + slug
+	}
+	return g.getNamespaceID(ctx, path)
+}
+
+// AddGroupMember looks up the GitLab user by email and adds them to the group.
+// accessLevel: 30=Developer, 40=Maintainer. Silently succeeds if user not in GitLab.
+func (g *GitLabAdapter) AddGroupMember(ctx context.Context, namespacePath, email string, accessLevel int) error {
+	userID, err := g.findUserByEmail(ctx, email)
+	if err != nil {
+		slog.Warn("gitlab: user not found, skipping group member add", "email", email)
+		return nil
+	}
+
+	var ns struct{ ID int `json:"id"` }
+	if err := g.do(ctx, http.MethodGet, "/namespaces/"+url.PathEscape(namespacePath), nil, &ns); err != nil {
+		return fmt.Errorf("gitlab.AddGroupMember: resolve group: %w", err)
+	}
+
+	payload := map[string]any{"user_id": userID, "access_level": accessLevel}
+	endpoint := fmt.Sprintf("/groups/%d/members", ns.ID)
+	if err := g.do(ctx, http.MethodPost, endpoint, payload, nil); err != nil {
+		if strings.Contains(err.Error(), "already a member") || strings.Contains(err.Error(), "409") {
+			slog.Info("gitlab: user already group member", "email", email, "group", namespacePath)
+			return nil
+		}
+		return fmt.Errorf("gitlab.AddGroupMember: %w", err)
+	}
+	slog.Info("gitlab: group member added", "email", email, "group", namespacePath)
+	return nil
+}
+
+// RemoveGroupMember looks up the GitLab user by email and removes them from the group.
+func (g *GitLabAdapter) RemoveGroupMember(ctx context.Context, namespacePath, email string) error {
+	userID, err := g.findUserByEmail(ctx, email)
+	if err != nil {
+		slog.Warn("gitlab: user not found, skipping group member remove", "email", email)
+		return nil
+	}
+
+	var ns struct{ ID int `json:"id"` }
+	if err := g.do(ctx, http.MethodGet, "/namespaces/"+url.PathEscape(namespacePath), nil, &ns); err != nil {
+		return fmt.Errorf("gitlab.RemoveGroupMember: resolve group: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("/groups/%d/members/%d", ns.ID, userID)
+	if err := g.do(ctx, http.MethodDelete, endpoint, nil, nil); err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil // already not a member
+		}
+		return fmt.Errorf("gitlab.RemoveGroupMember: %w", err)
+	}
+	slog.Info("gitlab: group member removed", "email", email, "group", namespacePath)
+	return nil
+}
+
+// findUserByEmail searches GitLab for a user by email and returns their numeric ID.
+func (g *GitLabAdapter) findUserByEmail(ctx context.Context, email string) (int, error) {
+	var users []struct {
+		ID    int    `json:"id"`
+		Email string `json:"email"`
+	}
+	if err := g.do(ctx, http.MethodGet, "/users?search="+url.QueryEscape(email), nil, &users); err != nil {
+		return 0, fmt.Errorf("search user by email: %w", err)
+	}
+	for _, u := range users {
+		if strings.EqualFold(u.Email, email) {
+			return u.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("no GitLab user found with email %q", email)
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // glProject mirrors the subset of GitLab project fields we use.
@@ -265,15 +346,63 @@ func (g *GitLabAdapter) getProject(ctx context.Context, fullPath string) (*RepoR
 }
 
 // getNamespaceID resolves a GitLab namespace (group or user) by its path and
-// returns its numeric ID. The ID is required when creating a project inside a group.
+// returns its numeric ID. If the namespace is a group that does not exist yet,
+// it is created automatically — idempotent on re-runs.
 func (g *GitLabAdapter) getNamespaceID(ctx context.Context, namespacePath string) (int, error) {
 	var ns struct {
 		ID int `json:"id"`
 	}
-	if err := g.do(ctx, http.MethodGet, "/namespaces/"+url.PathEscape(namespacePath), nil, &ns); err != nil {
-		return 0, err
+	err := g.do(ctx, http.MethodGet, "/namespaces/"+url.PathEscape(namespacePath), nil, &ns)
+	if err == nil {
+		return ns.ID, nil
 	}
-	return ns.ID, nil
+
+	// Namespace not found — try to create it as a group.
+	// Only single-level paths are auto-created; subgroups require the parent to exist first.
+	if !strings.Contains(err.Error(), "404") {
+		return 0, fmt.Errorf("resolve namespace: %w", err)
+	}
+
+	slog.Info("gitlab: namespace not found, creating group", "path", namespacePath)
+
+	parts := strings.SplitN(namespacePath, "/", 2)
+	groupPath := parts[0]
+	groupName := groupPath
+
+	payload := map[string]any{
+		"name":       groupName,
+		"path":       groupPath,
+		"visibility": "private",
+	}
+
+	// If it's a subgroup (e.g. "nexbridge/backend"), resolve the parent first.
+	if len(parts) == 2 {
+		parentID, err := g.getNamespaceID(ctx, parts[0])
+		if err != nil {
+			return 0, fmt.Errorf("resolve parent namespace %q: %w", parts[0], err)
+		}
+		groupName = parts[1]
+		groupPath = parts[1]
+		payload["name"] = groupName
+		payload["path"] = groupPath
+		payload["parent_id"] = parentID
+	}
+
+	var created struct {
+		ID int `json:"id"`
+	}
+	if err := g.do(ctx, http.MethodPost, "/groups", payload, &created); err != nil {
+		// Another process may have created it concurrently — re-fetch.
+		if strings.Contains(err.Error(), "already been taken") || strings.Contains(err.Error(), "already exists") {
+			if err2 := g.do(ctx, http.MethodGet, "/namespaces/"+url.PathEscape(namespacePath), nil, &ns); err2 == nil {
+				return ns.ID, nil
+			}
+		}
+		return 0, fmt.Errorf("create group %q: %w", namespacePath, err)
+	}
+
+	slog.Info("gitlab: group created", "path", namespacePath, "id", created.ID)
+	return created.ID, nil
 }
 
 // toRepoResult converts an internal glProject to the public RepoResult type.

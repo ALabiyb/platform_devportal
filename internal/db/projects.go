@@ -44,6 +44,7 @@ func (db *DB) CreateProject(ctx context.Context, p Project) (*Project, error) {
 			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
 			app_timezone, staging_url, k8s_manifest_paths,
+			port, health_path,
 			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
 	`
 	rows, err := db.pool.Query(ctx, q,
@@ -71,6 +72,7 @@ func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*Project, error) {
 			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
 			app_timezone, staging_url, k8s_manifest_paths,
+			port, health_path,
 			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
 		FROM projects
 		WHERE id = $1
@@ -94,7 +96,9 @@ func (db *DB) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]Proje
 			jenkins_folder, build_tool, notification_email,
 			defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
-			app_timezone, staging_url, k8s_manifest_paths
+			app_timezone, staging_url, k8s_manifest_paths,
+			port, health_path,
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
 		FROM projects
 		WHERE team_id = $1
 		ORDER BY created_at DESC
@@ -132,9 +136,11 @@ func (db *DB) RenameProject(ctx context.Context, id uuid.UUID, name string) (*Pr
 		UPDATE projects SET name = $1 WHERE id = $2
 		RETURNING id, team_id, name, slug, git_repo_url, harbor_project,
 		          jenkins_folder, build_tool, notification_email,
-		          defectdojo_product_id, status, generated_jenkinsfile,
+		          defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
 		          manifest_repo_url, app_repo_url, created_at, created_by, application_id,
-		          app_timezone, staging_url, k8s_manifest_paths
+		          app_timezone, staging_url, k8s_manifest_paths,
+		          port, health_path,
+		          vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
 	`
 	rows, err := db.pool.Query(ctx, q, name, id)
 	if err != nil {
@@ -164,9 +170,11 @@ func (db *DB) UpdateService(ctx context.Context, id uuid.UUID,
 		WHERE id = $7
 		RETURNING id, team_id, name, slug, git_repo_url, harbor_project,
 		          jenkins_folder, build_tool, notification_email,
-		          defectdojo_product_id, status, generated_jenkinsfile,
+		          defectdojo_product_id, defectdojo_engagement_id, status, generated_jenkinsfile,
 		          manifest_repo_url, app_repo_url, created_at, created_by, application_id,
-		          app_timezone, staging_url, k8s_manifest_paths
+		          app_timezone, staging_url, k8s_manifest_paths,
+		          port, health_path,
+		          vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
 	`
 	rows, err := db.pool.Query(ctx, q, name, buildTool, notificationEmail, appTimezone, stagingURL, k8sManifestPaths, id)
 	if err != nil {
@@ -247,7 +255,7 @@ func (db *DB) CreateEnvironment(ctx context.Context, e Environment) (*Environmen
 		INSERT INTO environments (project_id, name, namespace, status)
 		VALUES ($1, $2, $3, 'provisioning')
 		RETURNING id, project_id, name, namespace, ingress_url, argocd_app_name,
-		          db_name, db_username, manifest_path, status, created_at
+		          db_name, db_username, manifest_path, status, created_at, cluster_id
 	`
 	rows, err := db.pool.Query(ctx, q, e.ProjectID, e.Name, e.Namespace)
 	if err != nil {
@@ -265,7 +273,7 @@ func (db *DB) CreateEnvironment(ctx context.Context, e Environment) (*Environmen
 func (db *DB) GetEnvironmentsByProject(ctx context.Context, projectID uuid.UUID) ([]Environment, error) {
 	const q = `
 		SELECT id, project_id, name, namespace, ingress_url, argocd_app_name,
-		       db_name, db_username, manifest_path, status, created_at
+		       db_name, db_username, manifest_path, status, created_at, cluster_id
 		FROM environments
 		WHERE project_id = $1
 		ORDER BY CASE name WHEN 'dev' THEN 1 WHEN 'uat' THEN 2 WHEN 'prod' THEN 3 ELSE 4 END

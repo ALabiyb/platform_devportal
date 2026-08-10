@@ -69,14 +69,14 @@ func (db *DB) GetSession(ctx context.Context, id string) (*Session, error) {
 	return session, nil
 }
 
-// TouchSession extends the session expiry by 24 hours and updates last_seen.
+// TouchSession extends the session expiry by 8 hours and updates last_seen.
 // Called on every authenticated request so active users never get logged out.
 // We update last_seen and expires_at in a single query to avoid two round trips.
 func (db *DB) TouchSession(ctx context.Context, id string) error {
 	const q = `
 		UPDATE sessions
 		SET last_seen  = now(),
-		    expires_at = now() + INTERVAL '24 hours'
+		    expires_at = now() + INTERVAL '8 hours'
 		WHERE id = $1
 		  AND expires_at > now()
 	`

@@ -36,6 +36,55 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
   }
+  ::selection {
+    background: rgba(56, 189, 248, 0.35);
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #0f172a; }
+  ::-webkit-scrollbar-thumb { background: #334155; border-radius: 6px; }
+}
+
+@layer utilities {
+  .font-mono { font-family: 'IBM Plex Mono', monospace; }
+}
+
+/* Landing page flow diagram animations */
+@keyframes flowTravel {
+  0%   { left: 22px; opacity: 0; }
+  4%   { opacity: 1; }
+  96%  { opacity: 1; }
+  100% { left: calc(100% - 22px); opacity: 0; }
+}
+@keyframes flowNodeGlow {
+  0%, 82%, 100% { border-color: #334155; color: #64748b; box-shadow: none; }
+  4%,  14%      { border-color: var(--flow-primary); color: #f8fafc; box-shadow: 0 0 0 5px var(--flow-primary-glow); }
+}
+@keyframes flowLogLine {
+  0%        { opacity: 0; transform: translateY(4px); }
+  4%        { opacity: 1; transform: translateY(0); }
+  84%       { opacity: 1; }
+  95%, 100% { opacity: 0; }
+}
+
+/* Landing page nav Sign in button */
+.landing-signin-btn {
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.landing-signin-btn:hover {
+  border-color: #60a5fa;
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.08);
 }

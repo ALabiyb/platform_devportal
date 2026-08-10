@@ -12,12 +12,14 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
 	"github.com/ALabiyb/platform_devportal/internal/db"
@@ -191,6 +193,11 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		VulnSLALow:        slaL,
 	})
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			jsonError(w, `A project named "`+req.Name+`" already exists.`, http.StatusConflict)
+			return
+		}
 		jsonError(w, "create project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

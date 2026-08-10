@@ -105,6 +105,87 @@ func (db *DB) CreateTeam(ctx context.Context, t Team) (*Team, error) {
 	return team, nil
 }
 
+// DeleteTeam removes a team. Fails if any projects are still assigned to the team
+// (foreign key: projects.team_id → teams.id ON DELETE RESTRICT).
+func (db *DB) DeleteTeam(ctx context.Context, id uuid.UUID) error {
+	tag, err := db.pool.Exec(ctx, `DELETE FROM teams WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("db.DeleteTeam: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db.DeleteTeam: %w", pgx.ErrNoRows)
+	}
+	return nil
+}
+
+// RenameTeam updates the display name of a team (slug stays the same).
+func (db *DB) RenameTeam(ctx context.Context, id uuid.UUID, name string) (*Team, error) {
+	const q = `
+		UPDATE teams SET name = $1 WHERE id = $2
+		RETURNING id, org_id, name, slug, created_at
+	`
+	rows, err := db.pool.Query(ctx, q, name, id)
+	if err != nil {
+		return nil, fmt.Errorf("db.RenameTeam: query: %w", err)
+	}
+	team, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[Team])
+	if err != nil {
+		return nil, fmt.Errorf("db.RenameTeam: scan: %w", err)
+	}
+	return team, nil
+}
+
+// ── Team membership ───────────────────────────────────────────────────────────
+
+// ListTeamMembers returns all members of a team with their user details.
+func (db *DB) ListTeamMembers(ctx context.Context, teamID uuid.UUID) ([]TeamMemberDetail, error) {
+	const q = `
+		SELECT m.team_id, m.user_id, m.role AS member_role,
+		       u.role AS org_role, u.email, u.display_name
+		FROM team_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.team_id = $1
+		ORDER BY u.display_name ASC
+	`
+	rows, err := db.pool.Query(ctx, q, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("db.ListTeamMembers: query: %w", err)
+	}
+	members, err := pgx.CollectRows(rows, pgx.RowToStructByName[TeamMemberDetail])
+	if err != nil {
+		return nil, fmt.Errorf("db.ListTeamMembers: scan: %w", err)
+	}
+	return members, nil
+}
+
+// AddTeamMember inserts or updates a team member row.
+func (db *DB) AddTeamMember(ctx context.Context, teamID, userID uuid.UUID, role string) error {
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO team_members (team_id, user_id, role)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role
+	`, teamID, userID, role)
+	if err != nil {
+		return fmt.Errorf("db.AddTeamMember: %w", err)
+	}
+	return nil
+}
+
+// RemoveTeamMember deletes a team member row.
+func (db *DB) RemoveTeamMember(ctx context.Context, teamID, userID uuid.UUID) error {
+	tag, err := db.pool.Exec(ctx,
+		`DELETE FROM team_members WHERE team_id=$1 AND user_id=$2`,
+		teamID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("db.RemoveTeamMember: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("db.RemoveTeamMember: %w", pgx.ErrNoRows)
+	}
+	return nil
+}
+
 // ── Projects (org-scoped) ─────────────────────────────────────────────────────
 
 // ListProjectsByOrg returns all projects across all teams in the org,
@@ -113,11 +194,17 @@ func (db *DB) ListProjectsByOrg(ctx context.Context, orgID uuid.UUID) ([]Project
 	const q = `
 		SELECT p.id, p.team_id, p.name, p.slug, p.git_repo_url, p.harbor_project,
 		       p.jenkins_folder, p.build_tool, p.notification_email,
-		       p.defectdojo_product_id, p.status, p.generated_jenkinsfile,
-		       p.manifest_repo_url, p.app_repo_url, p.created_at, p.created_by
+		       p.defectdojo_product_id, p.defectdojo_engagement_id, p.status, p.generated_jenkinsfile,
+		       p.manifest_repo_url, p.app_repo_url, p.created_at, p.created_by,
+		       p.application_id, p.app_timezone, p.staging_url, p.k8s_manifest_paths,
+		       p.port, p.health_path,
+		       p.vuln_sla_critical, p.vuln_sla_high, p.vuln_sla_medium, p.vuln_sla_low
 		FROM projects p
-		JOIN teams t ON p.team_id = t.id
-		WHERE t.org_id = $1
+		LEFT JOIN teams t ON p.team_id = t.id
+		WHERE p.status != 'archived'
+		  AND (t.org_id = $1 OR p.application_id IN (
+		    SELECT id FROM applications WHERE org_id = $1
+		))
 		ORDER BY p.created_at DESC
 	`
 	rows, err := db.pool.Query(ctx, q, orgID)

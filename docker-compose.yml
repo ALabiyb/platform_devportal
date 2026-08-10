@@ -43,6 +43,11 @@ services:
       DB_PORT: "5432"
     networks:
       - traefik-net          # joins the shared network so it can reach postgres, keycloak, gitea, jenkins
+    extra_hosts:
+      # *.docker.localhost resolves to 127.0.0.1 inside containers (RFC 6761 loopback).
+      # host-gateway maps to the Docker bridge gateway so Traefik (0.0.0.0:443) is reachable.
+      - "harbor.docker.localhost:host-gateway"
+      - "devportal.localhost:host-gateway"
     labels:
       # Traefik picks up these labels automatically and creates the routing rule.
       # devportal.localhost resolves via your AdGuard Home or /etc/hosts.

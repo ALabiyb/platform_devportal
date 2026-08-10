@@ -2,43 +2,56 @@
 // Contact: saidlabiybm@gmail.com
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Layout } from "@/components/Layout";
+import { LandingPage } from "@/pages/LandingPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { CreateProjectPage } from "@/pages/CreateProjectPage";
+import { ProjectDetailPage } from "@/pages/ProjectDetailPage";
+import { TeamsPage } from "@/pages/TeamsPage";
+import { TeamDetailPage } from "@/pages/TeamDetailPage";
+import { ApplicationsPage } from "@/pages/ApplicationsPage";
+import { ApplicationDetailPage } from "@/pages/ApplicationDetailPage";
+import { CreateApplicationPage } from "@/pages/CreateApplicationPage";
+import { CreateServicePage } from "@/pages/CreateServicePage";
+import { CredentialsPage } from "@/pages/CredentialsPage";
+import { AuditLogPage } from "@/pages/AuditLogPage";
+import { UsersPage } from "@/pages/UsersPage";
+import { TemplatesPage } from "@/pages/TemplatesPage";
+import { PlatformPage } from "@/pages/PlatformPage";
 import { useCurrentUser } from "@/lib/api";
 
 function Spinner() {
   return (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+    <div className="flex h-screen items-center justify-center bg-[#0f172a]">
+      <span
+        style={{
+          width: 32, height: 32, borderRadius: "50%",
+          border: "3px solid #60a5fa", borderTopColor: "transparent",
+          display: "block", animation: "spin 0.8s linear infinite",
+        }}
+      />
     </div>
   );
 }
 
-// ProtectedRoute: redirects unauthenticated users to /login, preserving the
-// intended destination in location.state.from so LoginPage can redirect back.
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+// Shows LandingPage when unauthenticated at "/", redirects to "/" from any
+// other path when not logged in. Renders Layout (with Outlet) when authenticated.
+function AppRoot() {
   const { data: user, isLoading } = useCurrentUser();
   const location = useLocation();
-
   if (isLoading) return <Spinner />;
-
   if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    if (location.pathname === "/") return <LandingPage />;
+    return <Navigate to="/" state={{ from: location }} replace />;
   }
-
-  return <>{children}</>;
+  return <Layout />;
 }
 
-// PublicOnlyRoute: redirects already-authenticated users away from /login and
-// /register so they never see the auth screens while logged in.
 function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
   const { data: user, isLoading } = useCurrentUser();
-
   if (isLoading) return <Spinner />;
-
   if (user) return <Navigate to="/" replace />;
-
   return <>{children}</>;
 }
 
@@ -46,39 +59,26 @@ export function Router() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public auth routes — bounce logged-in users back to "/" */}
-        <Route
-          path="/login"
-          element={
-            <PublicOnlyRoute>
-              <LoginPage />
-            </PublicOnlyRoute>
-          }
-        />
-        <Route
-          path="/register"
-          element={
-            <PublicOnlyRoute>
-              <RegisterPage />
-            </PublicOnlyRoute>
-          }
-        />
+        <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
+        <Route path="/register" element={<PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>} />
 
-        {/* Protected layout — all app pages nest here */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }
-        >
+        <Route path="/" element={<AppRoot />}>
           <Route index element={<DashboardPage />} />
-          {/* Day 13: /projects, /projects/:id */}
-          {/* Day 15: /credentials, /audit   */}
+          <Route path="applications" element={<ApplicationsPage />} />
+          <Route path="applications/new" element={<CreateApplicationPage />} />
+          <Route path="applications/:appId" element={<ApplicationDetailPage />} />
+          <Route path="applications/:appId/services/new" element={<CreateServicePage />} />
+          <Route path="projects/new" element={<CreateProjectPage />} />
+          <Route path="projects/:id" element={<ProjectDetailPage />} />
+          <Route path="teams" element={<TeamsPage />} />
+          <Route path="teams/:id" element={<TeamDetailPage />} />
+          <Route path="credentials" element={<CredentialsPage />} />
+          <Route path="audit" element={<AuditLogPage />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="templates" element={<TemplatesPage />} />
+          <Route path="platform" element={<PlatformPage />} />
         </Route>
 
-        {/* Catch-all — unknown paths fall into the app (React Router handles them) */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

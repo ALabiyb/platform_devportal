@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# Author: Labiyb M. Said — DevSecOps Engineer
+# Contact: saidlabiybm@gmail.com
+# ---------------------------------------------------------------------------
+#
+# STANDALONE — works on any machine with Docker installed.
+# No shared Traefik, no external postgres, no external network required.
+#
+# Quick start (new machine):
+#   1. cp .env.example .env
+#   2. make setup              ← generates DB_PASSWORD + ENCRYPTION_KEY in .env
+#   3. docker compose -f docker-compose.standalone.yml up -d
+#   4. open http://localhost:8080
+#   5. POST /auth/register     ← creates your first admin account
+#
+# DevPortal is reachable at: http://localhost:8080
+# (No HTTPS in standalone mode — add a reverse proxy for production)
+#
+# Differences from docker-compose.yml:
+#   - Includes its own postgres (not shared)
+#   - No Traefik dependency — exposes port 8080 directly
+#   - Self-contained network — no external networks
+#   - postgres DB + user created automatically by the postgres image
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  # The official postgres image creates POSTGRES_DB and POSTGRES_USER
+  # automatically on first start. No manual SQL needed.
+  postgres:
+    image: postgres:16-alpine
+    container_name: devportal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       devportal
+      POSTGRES_USER:     devportal
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - devportal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devportal -d devportal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── DevPortal ──────────────────────────────────────────────────────────────
+  devportal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: devportal:dev
+    container_name: devportal
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres   # override .env — always use the compose postgres
+      DB_PORT: "5432"
+      DB_NAME: devportal
+      DB_USER: devportal
+    ports:
+      - "8080:8080"       # DevPortal UI + API
+    networks:
+      - devportal-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  devportal-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local

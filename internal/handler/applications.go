@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
 	"github.com/ALabiyb/platform_devportal/internal/db"
@@ -346,6 +347,14 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		AppTimezone       string `json:"app_timezone"`
 		StagingURL        string `json:"staging_url"`
 		K8sManifestPaths  string `json:"k8s_manifest_paths"`
+		VulnSLACritical   int    `json:"vuln_sla_critical"`
+		VulnSLAHigh       int    `json:"vuln_sla_high"`
+		VulnSLAMedium     int    `json:"vuln_sla_medium"`
+		VulnSLALow        int    `json:"vuln_sla_low"`
+		Members           []struct {
+			UserID uuid.UUID `json:"user_id"`
+			Role   string    `json:"role"`
+		} `json:"members"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		jsonError(w, "name is required", http.StatusBadRequest)
@@ -368,6 +377,23 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		stagingURL = &req.StagingURL
 	}
 
+	slaC := req.VulnSLACritical
+	if slaC == 0 {
+		slaC = 7
+	}
+	slaH := req.VulnSLAHigh
+	if slaH == 0 {
+		slaH = 30
+	}
+	slaM := req.VulnSLAMedium
+	if slaM == 0 {
+		slaM = 90
+	}
+	slaL := req.VulnSLALow
+	if slaL == 0 {
+		slaL = 180
+	}
+
 	slug := slugify(req.Name)
 
 	project, err := h.db.CreateProject(r.Context(), db.Project{
@@ -382,11 +408,31 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		AppTimezone:       tz,
 		StagingURL:        stagingURL,
 		K8sManifestPaths:  manifestPaths,
+		VulnSLACritical:   slaC,
+		VulnSLAHigh:       slaH,
+		VulnSLAMedium:     slaM,
+		VulnSLALow:        slaL,
 	})
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			jsonError(w, `A service named "`+req.Name+`" already exists in this application.`, http.StatusConflict)
+			return
+		}
 		jsonError(w, "create service: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Assign service members so the orchestrator can sync them to DefectDojo in step 10.
+	for _, m := range req.Members {
+		role := m.Role
+		if role != "lead" && role != "developer" {
+			role = "developer"
+		}
+		_ = h.db.AddProjectMember(r.Context(), project.ID, m.UserID, role, &user.ID)
+	}
+	// Creator is always a lead.
+	_ = h.db.AddProjectMember(r.Context(), project.ID, user.ID, "lead", nil)
 
 	// Insert all 15 step rows so the SSE stream can display them immediately.
 	steps := make([]db.ProvisioningStep, len(provisioner.StepLabels))
@@ -413,13 +459,15 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		envs = append(envs, env)
 	}
 
-	// Launch provisioner — namespace is the application's GitLab group.
-	go h.orchestrator.Provision(context.Background(), provisioner.ProvisionInput{
-		Project:         project,
-		Environments:    envs,
+	// Enqueue the provisioning job. The embedded worker (or a standalone
+	// cmd/worker pod) will claim it and run the full 15-step orchestrator.
+	if _, err := h.db.EnqueueProvisioningJob(r.Context(), project.ID, db.JobPayload{
 		GitNamespace:    app.GitNamespace,
 		ApplicationSlug: app.Slug,
-	})
+	}); err != nil {
+		jsonError(w, "enqueue provisioning: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -524,13 +572,54 @@ func (h *Handler) ReprovisionService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.ResetProvisioningSteps(r.Context(), serviceID); err != nil {
-		jsonError(w, "reset steps: "+err.Error(), http.StatusInternalServerError)
-		return
+	// If there are no step rows (e.g. first create partially failed), seed them now.
+	existingSteps, _ := h.db.GetProvisioningSteps(r.Context(), serviceID)
+	if len(existingSteps) == 0 {
+		steps := make([]db.ProvisioningStep, len(provisioner.StepLabels))
+		for i, label := range provisioner.StepLabels {
+			steps[i] = db.ProvisioningStep{
+				ProjectID: serviceID,
+				StepIndex: i + 1,
+				Label:     label,
+			}
+		}
+		if err := h.db.CreateProvisioningSteps(r.Context(), steps); err != nil {
+			jsonError(w, "create provisioning steps: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := h.db.ResetProvisioningSteps(r.Context(), serviceID); err != nil {
+			jsonError(w, "reset steps: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
+
 	if err := h.db.UpdateProjectStatus(r.Context(), serviceID, "provisioning"); err != nil {
 		jsonError(w, "reset status: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Ensure all three environment rows exist (handles partial creation failures).
+	existingEnvNames := make(map[string]bool, len(envs))
+	for _, e := range envs {
+		existingEnvNames[e.Name] = true
+	}
+	if len(envs) < 3 {
+		for _, envName := range []string{"dev", "uat", "prod"} {
+			if existingEnvNames[envName] {
+				continue
+			}
+			env, err := h.db.CreateEnvironment(r.Context(), db.Environment{
+				ProjectID: serviceID,
+				Name:      envName,
+				Namespace: project.Slug + "-" + envName,
+			})
+			if err != nil {
+				jsonError(w, "create environment: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			envs = append(envs, *env)
+		}
 	}
 
 	envPtrs := make([]*db.Environment, len(envs))
@@ -538,12 +627,13 @@ func (h *Handler) ReprovisionService(w http.ResponseWriter, r *http.Request) {
 		envPtrs[i] = &envs[i]
 	}
 
-	go h.orchestrator.Provision(context.Background(), provisioner.ProvisionInput{
-		Project:         project,
-		Environments:    envPtrs,
+	if _, err := h.db.EnqueueProvisioningJob(r.Context(), serviceID, db.JobPayload{
 		GitNamespace:    app.GitNamespace,
 		ApplicationSlug: app.Slug,
-	})
+	}); err != nil {
+		jsonError(w, "enqueue reprovisioning: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{

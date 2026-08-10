@@ -204,18 +204,43 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 	_ = o.database.SaveGeneratedJenkinsfile(ctx, projectID, jf)
 
 	if err := o.step(ctx, projectID, 2, func() error {
-		return o.git.CommitFiles(ctx, plugin.CommitFilesInput{
+		baseFiles := []plugin.CommitFile{
+			{Path: "Jenkinsfile", Content: jf, Action: "upsert"},
+			{Path: "VERSION", Content: "0.0.1\n", Action: "upsert"},
+			{Path: "Dockerfile", Content: dockerfileContent, Action: "upsert"},
+		}
+
+		// Commit to main first (the default branch already exists).
+		if err := o.git.CommitFiles(ctx, plugin.CommitFilesInput{
 			RepoPath:    repoPath,
 			Branch:      "main",
 			Message:     "chore: DevPortal bootstrap — Jenkinsfile, VERSION, Dockerfile",
 			AuthorName:  o.cfg.BotName,
 			AuthorEmail: o.cfg.BotEmail,
-			Files: []plugin.CommitFile{
-				{Path: "Jenkinsfile", Content: jf, Action: "upsert"},
-				{Path: "VERSION", Content: "0.0.1\n", Action: "upsert"},
-				{Path: "Dockerfile", Content: dockerfileContent, Action: "upsert"},
-			},
-		})
+			Files:       baseFiles,
+		}); err != nil {
+			return err
+		}
+
+		// Create dev, uat, prod branches from main so Jenkins multibranch can
+		// trigger the correct pipeline stage per branch (build once, promote).
+		// dev  → full build pipeline (compile, scan, docker push, update manifest)
+		// uat  → promoteImage only (retag dev image as uat-{tag}, update manifest)
+		// prod → approval + promoteImage from uat manifest
+		for _, branch := range []string{"dev", "uat", "prod"} {
+			if err := o.git.CommitFiles(ctx, plugin.CommitFilesInput{
+				RepoPath:    repoPath,
+				Branch:      branch,
+				StartBranch: "main",
+				Message:     "chore: DevPortal bootstrap — create " + branch + " branch",
+				AuthorName:  o.cfg.BotName,
+				AuthorEmail: o.cfg.BotEmail,
+				Files:       baseFiles,
+			}); err != nil {
+				return fmt.Errorf("create %s branch: %w", branch, err)
+			}
+		}
+		return nil
 	}); err != nil {
 		o.fail(ctx, projectID)
 		return err
@@ -372,12 +397,16 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 		return err
 	}
 
-	// ── Step 12: Ensure shared manifest repo + commit service manifests ────────
-	// Option B: one repo per application (e.g. restaurant-pos-k8s), branch per
-	// environment (dev/uat/prod), service subdirectory per service (api-gateway/).
-	// Only the dev branch is created here; uat/prod branches are created lazily
-	// by promoteImage in the Jenkins pipeline when the first promotion runs.
+	// ── Step 12: Ensure manifest group + shared manifest repo + commit all env manifests ──
+	// One repo per application (e.g. restaurant-pos-k8s), one branch per environment
+	// (dev / uat / prod), one subdirectory per service (api-gateway/).
+	// All three branches are seeded here so ArgoCD can sync immediately.
 	if err := o.step(ctx, projectID, 12, func() error {
+		// Ensure the platform manifest group exists (best-effort — already exists on re-runs).
+		if _, e := o.git.EnsureGroup(ctx, manifestGroup, ""); e != nil {
+			slog.Warn("provisioner: manifest group ensure failed (non-fatal)", "group", manifestGroup, "err", e)
+		}
+
 		_, e := o.git.EnsureRepo(ctx, plugin.CreateRepoInput{
 			Name:          manifestRepoName,
 			Description:   appSlug + " K8s manifests — managed by DevPortal",
@@ -389,41 +418,50 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 			return e
 		}
 
-		// Build manifests for the dev environment only; commit into the service
-		// subdirectory on the dev branch. uat/prod manifests are seeded by
-		// promoteImage at pipeline promotion time.
-		namespace := p.Slug + "-dev"
-		ingressHost := p.Slug + "-dev." + o.cfg.IngressBaseDomain
+		dir := p.Slug + "/"
 		image := strings.TrimRight(o.cfg.RegistryURL, "/") + "/" + p.HarborProject + "/" + p.Slug + ":latest"
 
-		ms := o.templates.Manifests(tmpl.ManifestInput{
-			AppName:     p.Slug,
-			Namespace:   namespace,
-			Environment: "dev",
-			Image:       image,
-			IngressHost: ingressHost,
-		})
+		// Commit manifests for all three environments. uat and prod branches are
+		// created from dev using StartBranch so ArgoCD can sync immediately.
+		for _, env := range []string{"dev", "uat", "prod"} {
+			namespace := p.Slug + "-" + env
+			ingressHost := p.Slug + "-" + env + "." + o.cfg.IngressBaseDomain
+			ms := o.templates.Manifests(tmpl.ManifestInput{
+				AppName:     p.Slug,
+				Namespace:   namespace,
+				Environment: env,
+				Image:       image,
+				IngressHost: ingressHost,
+			})
 
-		// Service subdirectory: e.g. api-gateway/deployment.yaml
-		dir := p.Slug + "/"
-		files := []plugin.CommitFile{
-			{Path: dir + "namespace.yaml", Content: ms.Namespace, Action: "upsert"},
-			{Path: dir + "deployment.yaml", Content: ms.Deployment, Action: "upsert"},
-			{Path: dir + "service.yaml", Content: ms.Service, Action: "upsert"},
-			{Path: dir + "ingress.yaml", Content: ms.Ingress, Action: "upsert"},
-		}
-		if ms.HPA != "" {
-			files = append(files, plugin.CommitFile{Path: dir + "hpa.yaml", Content: ms.HPA, Action: "upsert"})
-		}
+			files := []plugin.CommitFile{
+				{Path: dir + "namespace.yaml", Content: ms.Namespace, Action: "upsert"},
+				{Path: dir + "deployment.yaml", Content: ms.Deployment, Action: "upsert"},
+				{Path: dir + "service.yaml", Content: ms.Service, Action: "upsert"},
+				{Path: dir + "ingress.yaml", Content: ms.Ingress, Action: "upsert"},
+			}
+			if ms.HPA != "" {
+				files = append(files, plugin.CommitFile{Path: dir + "hpa.yaml", Content: ms.HPA, Action: "upsert"})
+			}
 
-		return o.git.CommitFiles(ctx, plugin.CommitFilesInput{
-			RepoPath:    manifestRepoPath,
-			Branch:      "dev",
-			Message:     "chore: DevPortal bootstrap — " + p.Slug + " dev manifests",
-			AuthorName:  o.cfg.BotName,
-			AuthorEmail: o.cfg.BotEmail,
-			Files:       files,
-		})
+			startBranch := ""
+			if env != "dev" {
+				startBranch = "dev" // create uat/prod branches from dev
+			}
+
+			if commitErr := o.git.CommitFiles(ctx, plugin.CommitFilesInput{
+				RepoPath:    manifestRepoPath,
+				Branch:      env,
+				StartBranch: startBranch,
+				Message:     "chore: DevPortal bootstrap — " + p.Slug + " " + env + " manifests",
+				AuthorName:  o.cfg.BotName,
+				AuthorEmail: o.cfg.BotEmail,
+				Files:       files,
+			}); commitErr != nil {
+				return fmt.Errorf("commit %s manifests: %w", env, commitErr)
+			}
+		}
+		return nil
 	}); err != nil {
 		o.fail(ctx, projectID)
 		return err

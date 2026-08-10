@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,6 +44,7 @@ import (
 	"github.com/ALabiyb/platform_devportal/internal/plugin"
 	"github.com/ALabiyb/platform_devportal/internal/provisioner"
 	tmpl "github.com/ALabiyb/platform_devportal/internal/template"
+	"github.com/ALabiyb/platform_devportal/internal/worker"
 	"github.com/ALabiyb/platform_devportal/web"
 )
 
@@ -71,6 +73,14 @@ func main() {
 	}
 	slog.Info("database connected", "host", cfg.DBHost, "name", cfg.DBName)
 
+	// Seed pipeline_templates with defaults for build tools that don't have a row yet.
+	// ON CONFLICT DO NOTHING — admin edits in the DB are always preserved.
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer seedCancel()
+	if err := seedTemplates(seedCtx, database); err != nil {
+		slog.Warn("pipeline template seeding failed — templates may be missing", "err", err)
+	}
+
 	// Shared HTTP client used for all outbound calls (Keycloak, GitLab, Jenkins, etc.).
 	// TLS_SKIP_VERIFY=true allows self-signed certs in local dev — set false in prod.
 	httpClient := newHTTPClient(cfg.TLSSkipVerify)
@@ -86,7 +96,7 @@ func main() {
 	slog.Info("auth ready", "mode", cfg.AuthMode)
 
 	// Construct all plugin adapters.
-	gitAdapter := plugin.NewGitLabAdapter(cfg, httpClient)
+	gitAdapter := buildGitAdapter(cfg, httpClient)
 	ciAdapter := plugin.NewJenkinsAdapter(cfg, httpClient)
 	registryAdapter := plugin.NewHarborAdapter(cfg, httpClient)
 	securityAdapter := plugin.NewDefectDojoAdapter(cfg, httpClient)
@@ -97,8 +107,12 @@ func main() {
 	// Template generator bakes config values into Jenkinsfiles and K8s manifests.
 	templates := tmpl.New(cfg)
 
-	// SSE hub and provisioning orchestrator.
+	// SSE hub — shared in-memory between the HTTP server and the embedded worker.
+	// Step events broadcast here reach connected SSE clients without any IPC.
 	hub := provisioner.NewHub()
+
+	// Orchestrator is wired to the shared hub so worker step events appear
+	// in the browser's SSE stream in real time.
 	orch := provisioner.New(
 		database, hub,
 		gitAdapter, ciAdapter, registryAdapter,
@@ -107,12 +121,21 @@ func main() {
 	)
 	slog.Info("provisioner ready")
 
+	// Embedded worker — polls provisioning_jobs and drives the orchestrator.
+	// Shares the hub with the HTTP server so SSE events reach the browser.
+	// Scale-out: run cmd/worker separately and reduce WorkerConcurrency here to 0.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	w := worker.NewWithHostname(database, orch, cfg.WorkerConcurrency)
+	go w.Run(workerCtx)
+	slog.Info("embedded worker started", "concurrency", cfg.WorkerConcurrency)
+
 	// Session cleanup goroutine — deletes expired rows from sessions table once per hour.
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	go runSessionCleanup(cleanupCtx, database)
 
-	// Wire up the full chi router with all middleware and routes.
-	h := handler.New(database, cfg, authHandler, orch, hub, web.FS, version)
+	// Wire up the full chi router. The orchestrator is no longer passed to the
+	// handler — handlers enqueue jobs to provisioning_jobs instead of calling it.
+	h := handler.New(database, cfg, authHandler, gitAdapter, hub, web.FS, version)
 
 	// HTTP server with explicit timeouts.
 	// WriteTimeout is omitted — SSE streams need unbounded write time.
@@ -138,6 +161,7 @@ func main() {
 	slog.Info("shutdown signal received", "signal", sig.String())
 
 	cleanupCancel()
+	workerCancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
@@ -148,6 +172,21 @@ func main() {
 
 	database.Close()
 	slog.Info("devportal stopped cleanly")
+}
+
+// buildGitAdapter returns the GitProvider implementation selected by GIT_PROVIDER.
+// "gitea"  → GiteaAdapter   (default)
+// "gitlab" → GitLabAdapter
+// Adding a new SCM = add a new case here and a new adapter file; nothing else changes.
+func buildGitAdapter(cfg *config.Config, httpClient *http.Client) plugin.GitProvider {
+	switch strings.ToLower(cfg.GitProvider) {
+	case "gitlab":
+		slog.Info("git provider: gitlab", "url", cfg.GitLabURL)
+		return plugin.NewGitLabAdapter(cfg, httpClient)
+	default: // "gitea" and anything unrecognised
+		slog.Info("git provider: gitea", "url", cfg.GiteaURL)
+		return plugin.NewGiteaAdapter(cfg, httpClient)
+	}
 }
 
 // buildAuthHandler initialises the correct auth handler based on AUTH_MODE.
@@ -183,6 +222,24 @@ func newHTTPClient(skipVerify bool) *http.Client {
 		Timeout:   30 * time.Second,
 		Transport: transport,
 	}
+}
+
+// seedTemplates inserts default Jenkinsfile + Dockerfile templates for every
+// known build tool. Rows that already exist are left untouched so admin edits survive restarts.
+func seedTemplates(ctx context.Context, database *db.DB) error {
+	seeds := make([]db.PipelineTemplate, 0, len(tmpl.SeedBuildTools()))
+	for _, tool := range tmpl.SeedBuildTools() {
+		seeds = append(seeds, db.PipelineTemplate{
+			BuildTool:   tool,
+			Jenkinsfile: tmpl.DefaultJenkinsfileTemplate(),
+			Dockerfile:  tmpl.DefaultDockerfile(tool),
+		})
+	}
+	if err := database.SeedPipelineTemplates(ctx, seeds); err != nil {
+		return err
+	}
+	slog.Info("pipeline templates seeded", "count", len(seeds))
+	return nil
 }
 
 // runSessionCleanup deletes expired session rows from PostgreSQL once per hour.

@@ -1,79 +1,94 @@
-# ---------------------------------------------------------------------------
+# =============================================================================
 # Author: Labiyb M. Said — DevSecOps Engineer
 # Contact: saidlabiybm@gmail.com
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Multi-stage build — three stages:
+#   1. frontend  — Node 22 builds the React/Vite SPA into web/dist/
+#   2. builder   — Go 1.25 compiles the binary (embeds web/dist at compile time)
+#   3. runtime   — minimal Alpine image, binary only (~15 MB total)
 #
-# Multi-stage build:
-#   Stage 1 (frontend) — compiles React SPA with Vite into web/dist/
-#   Stage 2 (builder)  — compiles a fully static Go binary (embeds web/dist/)
-#   Stage 3 (final)    — copies only the binary into a minimal distroless image
-#
-# The final image has no shell, no package manager, and runs as a non-root
-# user — smallest possible attack surface for a production container.
+# No local toolchain required. A plain "docker build ." or
+# "docker compose build" works on any machine with Docker installed.
+# =============================================================================
 
-# ── Stage 1: Frontend ────────────────────────────────────────────────────────
-FROM node:20-alpine AS frontend
+# ── Stage 1: Frontend ──────────────────────────────────────────────────────
+FROM node:22-alpine AS frontend
 
-WORKDIR /web
+WORKDIR /app/web
 
-# Install deps with a clean install to respect package-lock.json exactly.
-COPY web/package.json web/package-lock.json* ./
-RUN npm ci
+# Cache npm install — only re-runs when package-lock.json changes
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --prefer-offline
 
-# Copy remaining frontend source and build.
 COPY web/ ./
 RUN npm run build
 
-# ── Stage 2: Go build ────────────────────────────────────────────────────────
+
+# ── Stage 2: Go binary ─────────────────────────────────────────────────────
 FROM golang:1.25-alpine AS builder
 
-# git is needed so `go mod download` can fetch modules over HTTPS.
-# ca-certificates is needed for outbound HTTPS during the build.
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache git ca-certificates tzdata
 
-WORKDIR /src
+WORKDIR /app
 
-# Copy dependency manifests first so Docker can cache the module download
-# layer independently of source code changes. A rebuild only re-downloads
-# modules when go.mod or go.sum change.
+# Cache module download — only re-runs when go.mod/go.sum change
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy Go source. Then overlay the compiled frontend into web/dist/ so
-# the go:embed directive in web/embed.go picks it up.
+# Copy source (includes web/dist placeholder from repo)
 COPY . .
-COPY --from=frontend /web/dist ./web/dist
 
-# CGO_ENABLED=0 — produces a static binary with no libc dependency.
-# -trimpath     — strips local filesystem paths from the binary (reproducibility + security).
-# -ldflags -s -w — strips debug info and DWARF tables to shrink binary size.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath \
-    -ldflags="-s -w" \
-    -o /devportal ./cmd/devportal
+# Overwrite web/dist with the real Vite build from Stage 1.
+# This is what go:embed picks up at compile time.
+COPY --from=frontend /app/web/dist ./web/dist
 
-# ── Stage 3: Final image ─────────────────────────────────────────────────────
-# gcr.io/distroless/static:nonroot — no shell, no root, no unnecessary OS packages.
-FROM gcr.io/distroless/static:nonroot AS final
+# CGO_ENABLED=0 → fully static binary, no glibc dependency
+# -trimpath   → strip local build paths from stack traces
+# -ldflags    → strip debug info + symbol table (smaller binary)
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-w -s" \
+    -o app ./cmd/devportal
 
-LABEL org.opencontainers.image.title="devportal"
-LABEL org.opencontainers.image.description="NexBridge Technologies — Internal Developer Platform"
-LABEL org.opencontainers.image.authors="Labiyb M. Said <saidlabiybm@gmail.com>"
-LABEL org.opencontainers.image.source="https://github.com/ALabiyb/platform_devportal"
 
-# CA certificates are needed so devportal can make outbound HTTPS calls to
-# GitLab, Jenkins, Harbor, DefectDojo, Keycloak, and ArgoCD.
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# ── Stage 3: Runtime ───────────────────────────────────────────────────────
+FROM alpine:3.19
 
-# Copy the compiled binary from the builder stage.
-COPY --from=builder /devportal /devportal
+ARG APP_NAME=devportal
+ARG GIT_AUTHOR="Labiyb M. Said"
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+ARG VERSION=unknown
+ARG APP_TIMEZONE=Africa/Dar_es_Salaam
 
-# UID 65532 is the "nonroot" user baked into distroless images.
-# Running as non-root is a K8s security best practice and required by most
-# Pod Security Standards (restricted profile).
-USER 65532:65532
+LABEL org.opencontainers.image.title="${APP_NAME}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.authors="${GIT_AUTHOR}" \
+      org.opencontainers.image.vendor="NexBridge Technologies"
 
-# Port matches the HTTP_ADDR default of :8080.
+# ca-certificates: outbound HTTPS calls to Gitea, Jenkins, Harbor, etc.
+# tzdata: time.LoadLocation for Africa/Dar_es_Salaam and other timezones
+RUN apk add --no-cache ca-certificates tzdata
+
+ENV TZ=${APP_TIMEZONE}
+RUN cp /usr/share/zoneinfo/${APP_TIMEZONE} /etc/localtime && \
+    echo "${APP_TIMEZONE}" > /etc/timezone
+
+# Numeric UID — satisfies OPA runAsNonRoot and Kubernetes PodSecurity
+RUN addgroup -g 10001 -S appgroup && \
+    adduser  -u 10001 -S appuser -G appgroup
+
+WORKDIR /app
+
+COPY --from=builder --chown=appuser:appgroup /app/app .
+
+USER 10001
+
 EXPOSE 8080
 
-ENTRYPOINT ["/devportal"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD wget -qO- http://localhost:8080/healthz || exit 1
+
+CMD ["./app"]

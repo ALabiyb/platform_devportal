@@ -1,59 +1,91 @@
-# DevPortal — Daily Build Goals
+# DevPortal — Build Goals & Status
 
-> One goal per day. Mark done by changing ⬜ to ✅.
-> Each code file is fully commented and signed with the author header.
-
-| Day | Deliverable | Status |
-|-----|-------------|--------|
-| **Day 01** | **Project Scaffold** — `go.mod`, `config` package, HTTP server skeleton, `Makefile`, `Dockerfile`, `docker-compose.yml`, migrations schema | ✅ |
-| **Day 02** | **Database Layer** — `pgx` connection pool, `db` package with typed query helpers for all 10 tables | ✅ |
-| **Day 03** | **Auth Package** — OIDC provider (Keycloak), GitLab OAuth fallback, DB-backed session store, RBAC middleware | ✅ |
-| **Day 04** | **HTTP Router** — `chi` router, RBAC middleware, rate limiter, request logger, all route definitions wired | ✅ |
-| **Day 05** | **Plugin Interfaces + GitLab Adapter** — all 6 Go interfaces defined, full GitLab adapter implemented | ✅ |
-| **Day 06** | **Jenkins Adapter** — list folders, ensure folder, create multibranch job, trigger branch scan | ✅ |
-| **Day 07** | **Harbor + DefectDojo Adapters** — ensure image project, create security product + engagement | ✅ |
-| **Day 08** | **ArgoCD Adapter + DB Provisioner** — create ArgoCD Application per env, CREATE DB + USER + GRANT | ✅ |
-| **Day 09** | **Provisioning Orchestrator + SSE Hub** — 15-step async flow, per-project broadcast hub, live step updates | ✅ |
-| **Day 10** | **Jenkinsfile + K8s Manifest Generator** — per-stack templates (8 stacks), 7 YAMLs × N environments | ✅ |
-| **Day 11** | **React + Vite Scaffold** — TypeScript, shadcn/ui, Tailwind CSS, TanStack Query, `go:embed` wiring | ✅ |
-| **Day 12** | **Frontend Auth Pages** — login page, OIDC callback, protected routes, user context, nav layout | ✅ |
-| **Day 13** | **Project Form + SSE Progress View** — create-project wizard, live provisioning step stream UI | ⬜ |
-| **Day 14** | **Project List + Detail + Environment Status** — dashboard, per-environment status cards, ArgoCD sync state | ⬜ |
-| **Day 15** | **Credentials + Audit Log UI** — admin credential manager (encrypted at rest), audit event table | ⬜ |
-| **Day 16** | **Helm Chart** — full chart scaffold, `values.yaml` (personal vs production profiles), chart linting | ⬜ |
-| **Day 17** | **K8s Manifests for DevPortal Itself** — namespace, deployment, service, ingress, HPA, configmap, secret | ⬜ |
-| **Day 18** | **CI/CD for DevPortal** — Jenkinsfile, GitLab webhook, Harbor project, first successful pipeline build | ⬜ |
+> NexBridge Technologies — Internal Developer Platform
+> Author: Labiyb M. Said — DevSecOps Engineer
 
 ---
 
-## Architecture (locked 2026-08-02)
+## Completed
 
-- **Backend:** Go 1.23 · chi router · pgx/v5 · go-oidc/v3
-- **Frontend:** React 18 · TypeScript · Vite · shadcn/ui · TanStack Query · embedded via `go:embed`
-- **Database:** PostgreSQL 16 (devportal's own) + pgbouncer — separate from app DBs
-- **Auth:** OIDC via Keycloak (primary) · GitLab OAuth (fallback) · DB-backed sessions
-- **GitOps:** ArgoCD watches manifest repo · build once (`:git-sha`) promote dev→uat→prod
-- **Security:** AES-256-GCM credential encryption · DefectDojo · SonarQube · Dependency-Track
-- **Deploy:** Helm chart · K8s Deployment · Traefik ingress
+| Phase | Deliverable | Status |
+|-------|-------------|--------|
+| **01** | **Project Scaffold** — `go.mod`, config package, HTTP server skeleton, Makefile, Dockerfile, docker-compose | ✅ |
+| **02** | **Database Layer** — pgx connection pool, typed query helpers, embedded migration runner | ✅ |
+| **03** | **Auth Package** — local username/password (primary), OIDC/Keycloak (optional), DB-backed sessions, RBAC middleware | ✅ |
+| **04** | **HTTP Router** — chi router, RBAC middleware, per-IP rate limiter, structured request logger | ✅ |
+| **05** | **Plugin System** — 6 provider interfaces, Gitea adapter (primary), GitLab adapter (fallback) | ✅ |
+| **06** | **Jenkins Adapter** — ensure folder, create multibranch job, trigger branch scan, shared library wiring | ✅ |
+| **07** | **Harbor + DefectDojo Adapters** — ensure image project, create product + engagement | ✅ |
+| **08** | **ArgoCD Adapter + App DB Provisioner** — create ArgoCD Application per env, CREATE DB/USER/GRANT | ✅ |
+| **09** | **Provisioning Orchestrator + SSE Hub** — 15-step async flow, per-project broadcast hub, live step updates | ✅ |
+| **10** | **Jenkinsfile + Manifest Generator** — 8 stack templates, K8s YAML per environment | ✅ |
+| **11** | **React + Vite Scaffold** — TypeScript, shadcn/ui, TailwindCSS, TanStack Query v5, `go:embed` wiring | ✅ |
+| **12** | **Frontend Auth** — local login + register, protected routes, user context, idle timeout auto-logout | ✅ |
+| **13** | **Teams + Applications Model** — Teams > Applications > Services hierarchy replaces flat Projects model | ✅ |
+| **14** | **Service Provisioning UI** — create service wizard, live SSE progress stream, step-by-step status view | ✅ |
+| **15** | **Admin CRUD UI** — Credentials vault, Audit log, User management, Pipeline template editor | ✅ |
+| **16** | **Gitea Adapter + Bot Commits** — repo create, branch protect, Jenkinsfile/Dockerfile/manifest push via bot | ✅ |
+| **17** | **Modular Monolith + Worker Split** — Postgres job queue (`provisioning_jobs`), embedded worker goroutine pool, standalone `cmd/worker` binary for scale-out | ✅ |
+| **18** | **Platform Engineering IDP Layer** — 5 new DB tables: cluster registry, per-cluster platform services (CNPG/Kafka/MinIO/Redis/RabbitMQ/Vault/Gateway), manifest templates, environment profiles, service infra requirements | ✅ |
+| **19** | **Platform Admin UI** — Cluster Registry tab, Manifest Templates editor (15 K8s YAMLs), Environment Profiles (CPU/mem/HPA per tier) | ✅ |
 
-## Repo Structure
+---
+
+## In Progress / Next
+
+| Phase | Deliverable | Priority |
+|-------|-------------|----------|
+| **20** | **Provisioner reads cluster registry** — replace hardcoded ArgoCD URL with cluster row, read env profile for resource limits | High |
+| **21** | **Infra selection on service create** — UI form to select CNPG/Kafka/MinIO/Redis/RabbitMQ/Vault, stored in `service_infra_requirements` | High |
+| **22** | **Manifest template seed** — seed 15 default K8s YAML templates at startup using `SeedManifestTemplates` (ON CONFLICT DO NOTHING) | Medium |
+| **23** | **Helm Chart** — full chart scaffold, `values.yaml` (personal vs production profiles), chart linting, CI pipeline for the chart | Medium |
+| **24** | **DevPortal self-hosting** — Jenkins pipeline for DevPortal itself, Harbor project, ArgoCD application, first successful self-deploy | Medium |
+| **25** | **SonarQube + Dependency-Track integration** — SAST gate in Jenkinsfile, SBOM upload, CVE dashboard link in service detail | Low |
+| **26** | **OIDC / Keycloak wiring for production** — group-based RBAC from OIDC claims, Keycloak realm export, production auth guide | Low |
+
+---
+
+## Architecture (current)
 
 ```
-devportal/
-├── cmd/devportal/main.go       ← entry point
-├── internal/
-│   ├── config/                 ← env var config (Day 01)
-│   ├── db/                     ← pgx pool + query helpers (Day 02)
-│   ├── auth/                   ← OIDC + GitLab OAuth + sessions (Day 03)
-│   ├── handler/                ← HTTP handlers (Day 04+)
-│   ├── plugin/                 ← provider interfaces (Day 05)
-│   ├── provisioner/            ← orchestrator + SSE hub (Day 09)
-│   └── template/               ← Jenkinsfile + K8s manifest generators (Day 10)
-├── migrations/                 ← SQL schema files
-├── web/                        ← React SPA (Day 11+)
-├── helm/devportal/             ← Helm chart (Day 16)
-├── Dockerfile
-├── docker-compose.yml
-├── Makefile
-└── .env.example
+┌─────────────────────────────────────────────────────────────┐
+│                      DevPortal                              │
+│                                                             │
+│  ┌──────────────┐  ┌─────────────────────────────────────┐ │
+│  │  React SPA   │  │         Go HTTP API (chi)           │ │
+│  │  (Vite/TS)   │◄─│  auth · projects · teams · admin   │ │
+│  │  go:embed    │  └────────────────┬────────────────────┘ │
+│  └──────────────┘                   │                       │
+│                                     │ EnqueueProvisioningJob│
+│                           ┌─────────▼─────────┐            │
+│                           │  provisioning_jobs │            │
+│                           │  (Postgres queue)  │            │
+│                           └─────────┬──────────┘            │
+│                                     │ SELECT FOR UPDATE     │
+│                           ┌─────────▼──────────┐           │
+│                           │   Worker Pool (3)   │           │
+│                           │  cmd/devportal      │           │
+│                           │  (embedded) or      │           │
+│                           │  cmd/worker (pod)   │           │
+│                           └─────────┬───────────┘           │
+└─────────────────────────────────────│─────────────────────┘
+                                      │ 15-step orchestrator
+           ┌──────────┬───────────────┼──────────┬──────────┐
+           ▼          ▼               ▼          ▼          ▼
+         Gitea     Jenkins          Harbor    DefectDojo  ArgoCD
+        (repo +   (multibranch    (image     (product +  (GitOps
+        commits)   job)           project)   engagement) app)
+
+Platform Engineering layer (Admin UI):
+  clusters → cluster_platform_services → manifest_templates
+  environment_profiles → service_infra_requirements
 ```
+
+**Stack:**
+- Backend: Go 1.23 · chi · pgx/v5
+- Frontend: React 18 · TypeScript · Vite · TailwindCSS · TanStack Query v5 · shadcn/ui
+- Database: PostgreSQL 16 · 8 migrations applied
+- Auth: Local (primary) · OIDC/Keycloak (optional)
+- GitOps: ArgoCD · build-once tag `:git-sha` · promote dev→uat→prod
+- Security: AES-256-GCM credential encryption · DefectDojo · Kyverno image signing
+- Infra: Docker Compose (dev) · Helm chart (production, in progress)

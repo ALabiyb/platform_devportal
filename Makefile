@@ -5,50 +5,90 @@
 
 BINARY  := devportal
 CMD     := ./cmd/devportal
-# IMAGE must be set via environment variable or make argument — no domain hardcoded.
-# Usage: make docker-build IMAGE=harbor.example.com/devportal/devportal
 IMAGE   ?= $(shell echo $${REGISTRY_URL}/devportal/devportal)
-
-# VERSION is the git tag + commit SHA, e.g. "v0.1.0-abc1234".
-# Falls back to "dev" when git is not available.
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build run test lint tidy frontend build-full docker-build docker-push migrate clean help
+.PHONY: setup dev build frontend build-full test lint tidy \
+        docker-build docker-push up down logs clean help
 
-## build: compile the Go binary (requires web/dist to exist — run 'make frontend' first)
+# ── First-time setup ────────────────────────────────────────────────────────
+
+## setup: create .env from .env.example and generate required secrets
+setup:
+	@if [ -f .env ]; then \
+		echo ".env already exists — skipping. Delete it and re-run to regenerate."; \
+	else \
+		cp .env.example .env; \
+		echo "Created .env from .env.example"; \
+	fi
+	@# Generate ENCRYPTION_KEY if still empty
+	@if grep -q 'ENCRYPTION_KEY=$$' .env || grep -q 'ENCRYPTION_KEY= *$$' .env; then \
+		KEY=$$(openssl rand -base64 32); \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			sed -i '' "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$$KEY|" .env; \
+		else \
+			sed -i "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$$KEY|" .env; \
+		fi; \
+		echo "Generated ENCRYPTION_KEY"; \
+	fi
+	@# Generate DB_PASSWORD if still empty
+	@if grep -q 'DB_PASSWORD=$$' .env || grep -q 'DB_PASSWORD= *$$' .env; then \
+		PASS=$$(openssl rand -hex 16); \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			sed -i '' "s|^DB_PASSWORD=.*|DB_PASSWORD=$$PASS|" .env; \
+		else \
+			sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$$PASS|" .env; \
+		fi; \
+		echo "Generated DB_PASSWORD"; \
+	fi
+	@echo ""
+	@echo "Next steps:"
+	@echo "  Standalone (any machine):  docker compose -f docker-compose.standalone.yml up -d"
+	@echo "  Shared infra (local lab):  docker compose up -d"
+	@echo "  Local Go run:              make dev"
+	@echo ""
+	@echo "Then open http://localhost:8080 and POST /auth/register to create your admin account."
+
+# ── Local development ───────────────────────────────────────────────────────
+
+## dev: run devportal locally with live .env (no Docker)
+dev:
+	@[ -f .env ] || (echo "ERROR: .env not found. Run: make setup" && exit 1)
+	set -a && . ./.env && set +a && go run $(CMD)
+
+## frontend: build the React SPA into web/dist/ (required before 'make build')
+frontend:
+	cd web && npm ci && npm run build
+
+## build: compile the Go binary (run 'make frontend' first if not using Docker)
 build:
 	@mkdir -p bin
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
 
-## frontend: install npm deps and build the React SPA into web/dist/
-frontend:
-	cd web && npm ci && npm run build
-
-## build-full: build frontend then Go binary (full production build)
+## build-full: build frontend then Go binary in one step (local, no Docker)
 build-full: frontend build
 
-## run: start devportal locally (reads .env — copy .env.example first)
-run:
-	@[ -f .env ] || (echo "ERROR: .env not found. Run: cp .env.example .env" && exit 1)
-	set -a && . ./.env && set +a && go run $(CMD)
+# ── Docker ──────────────────────────────────────────────────────────────────
 
-## test: run all unit tests with the race detector enabled
-test:
-	go test -race -count=1 -timeout=60s ./...
+## up: start devportal + postgres using the standalone compose (no shared infra needed)
+up:
+	@[ -f .env ] || (echo "ERROR: .env not found. Run: make setup" && exit 1)
+	docker compose -f docker-compose.standalone.yml up -d --build
 
-## lint: run golangci-lint (install: brew install golangci-lint)
-lint:
-	golangci-lint run ./...
+## down: stop and remove standalone compose containers
+down:
+	docker compose -f docker-compose.standalone.yml down
 
-## tidy: sync go.mod and go.sum with the actual imports
-tidy:
-	go mod tidy
+## logs: tail devportal logs
+logs:
+	docker compose -f docker-compose.standalone.yml logs -f devportal
 
-## docker-build: build the production Docker image
+## docker-build: build and tag the production image
 docker-build:
 	docker build \
 		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_DATE=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
 		-t $(IMAGE):$(VERSION) \
 		-t $(IMAGE):latest \
 		.
@@ -58,19 +98,28 @@ docker-push: docker-build
 	docker push $(IMAGE):$(VERSION)
 	docker push $(IMAGE):latest
 
-## migrate: apply SQL migrations to the local dev database
-migrate:
-	@[ -f .env ] || (echo "ERROR: .env not found" && exit 1)
-	@. ./.env && PGPASSWORD=$$DB_PASSWORD psql \
-		-h $$DB_HOST -p $$DB_PORT \
-		-U $$DB_USER -d $$DB_NAME \
-		-f migrations/001_initial.sql
-	@echo "Migrations applied."
+# ── Quality ─────────────────────────────────────────────────────────────────
+
+## test: run all unit tests with the race detector
+test:
+	go test -race -count=1 -timeout=60s ./...
+
+## lint: run golangci-lint (install: brew install golangci-lint)
+lint:
+	golangci-lint run ./...
+
+## tidy: sync go.mod and go.sum with actual imports
+tidy:
+	go mod tidy
+
+# ── Housekeeping ────────────────────────────────────────────────────────────
 
 ## clean: remove compiled binaries
 clean:
 	rm -rf bin/
 
-## help: list all available make targets
+## help: list all available make targets with descriptions
 help:
-	@grep -E '^##' Makefile | sed 's/## //' | column -t -s ':'
+	@echo "DevPortal — NexBridge Technologies"
+	@echo ""
+	@grep -E '^##' Makefile | sed 's/## /  /' | column -t -s ':'

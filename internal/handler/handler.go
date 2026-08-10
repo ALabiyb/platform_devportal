@@ -50,19 +50,25 @@ import (
 	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
 	"github.com/ALabiyb/platform_devportal/internal/config"
 	"github.com/ALabiyb/platform_devportal/internal/db"
+	"github.com/ALabiyb/platform_devportal/internal/plugin"
 	"github.com/ALabiyb/platform_devportal/internal/provisioner"
 )
 
 // Handler holds every dependency shared across all HTTP handlers.
 // Create one with New() and keep it for the process lifetime.
+//
+// The provisioner orchestrator is intentionally absent here. HTTP handlers
+// enqueue a provisioning_jobs row via db.EnqueueProvisioningJob instead of
+// calling the orchestrator directly. The embedded worker (or a standalone
+// cmd/worker pod) claims and executes jobs asynchronously.
 type Handler struct {
-	db           *db.DB
-	cfg          *config.Config
-	auth         *authpkg.Handler
-	orchestrator *provisioner.Orchestrator
-	hub          *provisioner.Hub
-	webFS        fs.FS
-	version      string
+	db      *db.DB
+	cfg     *config.Config
+	auth    *authpkg.Handler
+	git     plugin.GitProvider
+	hub     *provisioner.Hub
+	webFS   fs.FS
+	version string
 
 	// per-IP rate limiting
 	mu       sync.Mutex
@@ -75,16 +81,16 @@ type visitor struct {
 }
 
 // New constructs a Handler and starts the rate-limiter cleanup goroutine.
-func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, orch *provisioner.Orchestrator, hub *provisioner.Hub, webFS fs.FS, version string) *Handler {
+func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, git plugin.GitProvider, hub *provisioner.Hub, webFS fs.FS, version string) *Handler {
 	h := &Handler{
-		db:           database,
-		cfg:          cfg,
-		auth:         authHandler,
-		orchestrator: orch,
-		hub:          hub,
-		webFS:        webFS,
-		version:      version,
-		visitors:     make(map[string]*visitor),
+		db:       database,
+		cfg:      cfg,
+		auth:     authHandler,
+		git:      git,
+		hub:      hub,
+		webFS:    webFS,
+		version:  version,
+		visitors: make(map[string]*visitor),
 	}
 	go h.cleanupVisitors()
 	return h
@@ -99,12 +105,13 @@ func (h *Handler) Routes() http.Handler {
 	r.Use(middleware.RealIP)    // trust X-Forwarded-For set by Traefik
 	r.Use(middleware.RequestID) // inject X-Request-ID header
 	r.Use(h.requestLogger)      // slog structured log line per request
-	r.Use(h.rateLimiter)        // per-IP: 10 req/s, burst 30
+	r.Use(h.rateLimiter)        // per-IP: 30 req/s, burst 60
 	r.Use(middleware.Recoverer) // catch panics, return 500 instead of crashing
 
 	// ── Public routes — no authentication required ─────────────────────────
 	r.Get("/healthz", h.handleHealthz)
 	r.Get("/branding.json", h.handleBranding)
+	r.Get("/setup/status", h.handleSetupStatus)
 
 	switch h.cfg.AuthMode {
 	case "local":
@@ -135,6 +142,11 @@ func (h *Handler) Routes() http.Handler {
 			r.Get("/projects/{projectID}/jenkinsfile", h.DownloadJenkinsfile)
 			r.Get("/teams", h.ListTeams)
 			r.Get("/teams/{teamID}", h.GetTeam)
+			r.Get("/teams/{teamID}/members", h.ListTeamMembers)
+
+			// applications — member-scoped read; leads/admins can update/delete
+			r.Put("/applications/{appID}", h.UpdateApplication)
+			r.Delete("/applications/{appID}", h.DeleteApplication)
 
 			// developer+ — project creation
 			r.Group(func(r chi.Router) {
@@ -142,18 +154,56 @@ func (h *Handler) Routes() http.Handler {
 				r.Post("/projects", h.CreateProject)
 			})
 
+			// applications — member-scoped access
+			r.Get("/applications", h.ListApplications)
+			r.Post("/applications", h.CreateApplication)
+			r.Get("/applications/{appID}", h.GetApplication)
+			r.Get("/applications/{appID}/members", h.ListApplicationMembers)
+			r.Get("/applications/{appID}/services", h.ListServices)
+			r.Post("/applications/{appID}/services", h.CreateService)
+			r.Patch("/applications/{appID}/services/{serviceID}", h.RenameService)
+			r.Put("/applications/{appID}/services/{serviceID}", h.UpdateService)
+			r.Post("/applications/{appID}/services/{serviceID}/reprovision", h.ReprovisionService)
+			r.Delete("/applications/{appID}/services/{serviceID}", h.DeleteService)
+
+			// application lead or admin only
+			r.Group(func(r chi.Router) {
+				r.Use(authpkg.RequireRole(authpkg.RoleDeveloper))
+				r.Post("/applications/{appID}/members", h.AddApplicationMember)
+				r.Delete("/applications/{appID}/members/{userID}", h.RemoveApplicationMember)
+			})
+
 			// admin only — user management, credential vault, team mgmt, audit log
 			r.Group(func(r chi.Router) {
 				r.Use(authpkg.RequireRole(authpkg.RoleAdmin))
 				r.Get("/users", h.ListUsers)
-				r.Post("/users", h.CreateUser)              // local mode: create account
+				r.Post("/users", h.CreateUser)
 				r.Delete("/users/{userID}", h.DeactivateUser)
 				r.Post("/users/{userID}/role", h.UpdateUserRole)
 				r.Post("/teams", h.CreateTeam)
+				r.Put("/teams/{teamID}", h.UpdateTeam)
+				r.Delete("/teams/{teamID}", h.DeleteTeam)
+				r.Post("/teams/{teamID}/members", h.AddTeamMember)
+				r.Delete("/teams/{teamID}/members/{userID}", h.RemoveTeamMember)
 				r.Get("/credentials", h.ListCredentials)
 				r.Post("/credentials", h.CreateCredential)
 				r.Delete("/credentials/{credentialID}", h.DeleteCredential)
 				r.Get("/audit", h.ListAuditEvents)
+				// Pipeline template management
+				r.Get("/admin/templates", h.ListTemplates)
+				r.Get("/admin/templates/{tool}", h.GetTemplate)
+				r.Put("/admin/templates/{tool}", h.UpdateTemplate)
+
+				// Platform Engineering — cluster registry, manifest templates, env profiles
+				r.Get("/admin/clusters", h.ListClusters)
+				r.Post("/admin/clusters", h.CreateCluster)
+				r.Put("/admin/clusters/{clusterID}", h.UpdateCluster)
+				r.Get("/admin/clusters/{clusterID}/services", h.ListClusterServices)
+				r.Put("/admin/clusters/{clusterID}/services/{serviceType}", h.UpsertClusterService)
+				r.Get("/admin/manifest-templates", h.ListManifestTemplates)
+				r.Put("/admin/manifest-templates/{name}", h.UpsertManifestTemplate)
+				r.Get("/admin/environment-profiles", h.ListEnvironmentProfiles)
+				r.Put("/admin/environment-profiles/{name}", h.UpdateEnvironmentProfile)
 			})
 		})
 	})
@@ -226,7 +276,7 @@ func (h *Handler) getVisitorLimiter(ip string) *rate.Limiter {
 	defer h.mu.Unlock()
 	v, ok := h.visitors[ip]
 	if !ok {
-		v = &visitor{limiter: rate.NewLimiter(10, 30)}
+		v = &visitor{limiter: rate.NewLimiter(30, 60)}
 		h.visitors[ip] = v
 	}
 	v.lastSeen = time.Now()

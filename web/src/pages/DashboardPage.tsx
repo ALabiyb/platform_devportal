@@ -1,67 +1,179 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
-// Day 13 will replace this stub with the full project list + create form.
-import { useProjects } from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { FolderGit2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useApplications, useTeams, useProjects } from "@/lib/api";
 import { useBrand } from "@/contexts/BrandContext";
 
-function statusVariant(status: string) {
-  switch (status) {
-    case "provisioned": return "success" as const;
-    case "provisioning": return "running" as const;
-    case "failed": return "destructive" as const;
-    default: return "secondary" as const;
-  }
+function StatCard({ label, value, sub, color }: { label: string; value: number | string; sub?: string; color?: string }) {
+  return (
+    <div className="border border-[#334155] bg-[#1e293b] rounded-[10px] p-5">
+      <p className="text-[12px] text-[#64748b] m-0 mb-1 uppercase tracking-wider">{label}</p>
+      <p className={`text-[32px] font-bold m-0 leading-none ${color ?? "text-[#f8fafc]"}`}>{value}</p>
+      {sub && <p className="text-[11px] text-[#64748b] m-0 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+function StatusDot({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    active: "#4ade80",
+    provisioning: "#facc15",
+    failed: "#f87171",
+    archived: "#475569",
+  };
+  return (
+    <span
+      style={{ background: map[status] ?? map.archived }}
+      className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+    />
+  );
 }
 
 export function DashboardPage() {
-  const { data: projects, isLoading } = useProjects();
+  const { data: applications, isLoading: appsLoading } = useApplications();
+  const { data: teams, isLoading: teamsLoading } = useTeams();
+  const { data: projects } = useProjects();
   const brand = useBrand();
 
+  const totalApps = applications?.length ?? 0;
+  const activeApps = applications?.filter((a) => a.status === "active").length ?? 0;
+  const totalServices = projects?.length ?? 0;
+  const failedServices = projects?.filter((p) => p.status === "failed").length ?? 0;
+  const totalTeams = teams?.length ?? 0;
+  const recentApps = [...(applications ?? [])].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  ).slice(0, 5);
+
+  const isLoading = appsLoading || teamsLoading;
+
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Overview of your projects
-          {brand.company ? ` — ${brand.company}` : ""}
-        </p>
+    <div className="p-8">
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-[24px] font-bold tracking-tight m-0 mb-1">
+          {brand.company ? brand.company : "Dashboard"}
+        </h1>
+        <p className="text-[13px] text-[#64748b] m-0">Internal Developer Platform overview</p>
       </div>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Loading projects…
-        </div>
-      ) : !projects?.length ? (
-        <Card className="flex flex-col items-center justify-center py-16 text-center">
-          <FolderGit2 className="h-10 w-10 text-muted-foreground mb-3" />
-          <p className="text-sm font-medium">No projects yet</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Create your first project to get started.
-          </p>
-        </Card>
+        <div className="text-[13px] text-[#64748b]">Loading…</div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.map((p) => (
-            <Card key={p.id} className="hover:border-primary/40 transition-colors cursor-pointer">
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-base">{p.name}</CardTitle>
-                  <Badge variant={statusVariant(p.status)}>{p.status}</Badge>
+        <>
+          {/* Stats row */}
+          <div className="grid gap-4 mb-8" style={{ gridTemplateColumns: "repeat(3, minmax(180px, 260px))" }}>
+            <StatCard label="Applications" value={totalApps} sub={`${activeApps} active`} />
+            <StatCard label="Services" value={totalServices}
+              sub={failedServices > 0 ? `${failedServices} failed` : "all healthy"}
+              color={failedServices > 0 ? "text-[#f87171]" : "text-[#f8fafc]"} />
+            <StatCard label="Teams" value={totalTeams} />
+          </div>
+
+          <div className="grid gap-6" style={{ gridTemplateColumns: "1fr 320px" }}>
+            {/* Recent applications */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-[14px] font-semibold m-0">Applications</h2>
+                <Link to="/applications" className="text-[12px] text-[#60a5fa] no-underline hover:underline">
+                  View all →
+                </Link>
+              </div>
+
+              {!applications?.length ? (
+                <div className="border border-dashed border-[#334155] rounded-[10px] py-10 text-center">
+                  <p className="text-[13px] font-medium m-0 mb-1">No applications yet</p>
+                  <p className="text-[12px] text-[#94a3b8] m-0 mb-4">
+                    An application groups related microservices together.
+                  </p>
+                  <Link to="/applications/new"
+                    className="inline-block h-9 px-4 rounded-md bg-primary text-white text-[13px] no-underline leading-9">
+                    + New application
+                  </Link>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground">{p.build_tool}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {new Date(p.created_at).toLocaleDateString()}
-                </p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {recentApps.map((app) => (
+                    <Link
+                      key={app.id}
+                      to={`/applications/${app.id}`}
+                      className="flex items-center gap-3 border border-[#334155] bg-[#1e293b] rounded-[8px] px-4 py-3 no-underline hover:border-primary/40 transition-colors group"
+                    >
+                      <StatusDot status={app.status} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-medium m-0 text-[#f8fafc] group-hover:text-primary transition-colors truncate">
+                          {app.name}
+                        </p>
+                        <p className="text-[11px] text-[#64748b] m-0 font-mono truncate">/{app.git_namespace}</p>
+                      </div>
+                      <span className="text-[11px] text-[#475569] flex-shrink-0">
+                        {new Date(app.created_at).toLocaleDateString()}
+                      </span>
+                    </Link>
+                  ))}
+                  {(applications?.length ?? 0) > 5 && (
+                    <Link to="/applications" className="text-[12px] text-[#60a5fa] no-underline text-center py-1 hover:underline">
+                      +{(applications?.length ?? 0) - 5} more
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Teams panel */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-[14px] font-semibold m-0">Teams</h2>
+                <Link to="/teams" className="text-[12px] text-[#60a5fa] no-underline hover:underline">
+                  Manage →
+                </Link>
+              </div>
+
+              {!teams?.length ? (
+                <div className="border border-dashed border-[#334155] rounded-[10px] py-8 text-center">
+                  <p className="text-[12px] text-[#94a3b8] m-0 mb-3">No teams yet</p>
+                  <Link to="/teams"
+                    className="inline-block h-8 px-3 rounded border border-[#334155] text-[#94a3b8] text-[12px] no-underline leading-8 hover:border-primary/40 hover:text-[#f8fafc]">
+                    Create team
+                  </Link>
+                </div>
+              ) : (
+                <div className="border border-[#334155] rounded-[10px] overflow-hidden">
+                  {teams.map((team, i) => (
+                    <Link
+                      key={team.id}
+                      to={`/teams/${team.id}`}
+                      className={`flex items-center justify-between px-4 py-3 no-underline hover:bg-[#1e293b]/60 transition-colors group ${i < teams.length - 1 ? "border-b border-[#1e293b]" : ""}`}
+                    >
+                      <div>
+                        <p className="text-[13px] font-medium m-0 text-[#f8fafc] group-hover:text-primary transition-colors">
+                          {team.name}
+                        </p>
+                        <p className="text-[11px] text-[#64748b] m-0 font-mono">{team.slug}</p>
+                      </div>
+                      <span className="text-[12px] text-[#475569]">→</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+
+              {/* Quick links */}
+              <div className="mt-4 flex flex-col gap-2">
+                <Link to="/users"
+                  className="flex items-center gap-2 text-[12px] text-[#64748b] no-underline hover:text-[#f8fafc] transition-colors px-1">
+                  <span>👥</span> User management
+                </Link>
+                <Link to="/templates"
+                  className="flex items-center gap-2 text-[12px] text-[#64748b] no-underline hover:text-[#f8fafc] transition-colors px-1">
+                  <span>⚙</span> Pipeline templates
+                </Link>
+                <Link to="/audit"
+                  className="flex items-center gap-2 text-[12px] text-[#64748b] no-underline hover:text-[#f8fafc] transition-colors px-1">
+                  <span>📋</span> Audit log
+                </Link>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
