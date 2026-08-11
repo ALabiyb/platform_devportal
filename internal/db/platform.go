@@ -287,3 +287,51 @@ func (d *DB) DeleteServiceInfraRequirement(ctx context.Context, projectID uuid.U
 	}
 	return nil
 }
+
+// ── Service Dependencies ───────────────────────────────────────────────────────
+
+// SetServiceDependencies replaces all dependency edges for fromProject with the
+// provided list. Existing edges not in toProjects are deleted; new ones are inserted.
+func (d *DB) SetServiceDependencies(ctx context.Context, fromProject uuid.UUID, deps []ServiceDependency) error {
+	// Delete all existing edges from this project, then re-insert.
+	if _, err := d.pool.Exec(ctx,
+		`DELETE FROM service_dependencies WHERE from_project = $1`, fromProject,
+	); err != nil {
+		return fmt.Errorf("service_dependencies: clear: %w", err)
+	}
+	for _, dep := range deps {
+		if _, err := d.pool.Exec(ctx, `
+			INSERT INTO service_dependencies (from_project, to_project, port, description)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (from_project, to_project) DO UPDATE
+				SET port = EXCLUDED.port, description = EXCLUDED.description`,
+			fromProject, dep.ToProject, dep.Port, dep.Description,
+		); err != nil {
+			return fmt.Errorf("service_dependencies: insert: %w", err)
+		}
+	}
+	return nil
+}
+
+// ListServiceDependencies returns all outbound dependency edges for a project.
+func (d *DB) ListServiceDependencies(ctx context.Context, fromProject uuid.UUID) ([]ServiceDependency, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, from_project, to_project, port, description, created_at
+		FROM   service_dependencies
+		WHERE  from_project = $1
+		ORDER  BY created_at`, fromProject,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("service_dependencies: list: %w", err)
+	}
+	defer rows.Close()
+	var out []ServiceDependency
+	for rows.Next() {
+		var d ServiceDependency
+		if err := rows.Scan(&d.ID, &d.FromProject, &d.ToProject, &d.Port, &d.Description, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("service_dependencies: scan: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

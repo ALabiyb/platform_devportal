@@ -346,7 +346,8 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		NotificationEmail string `json:"notification_email"`
 		AppTimezone       string `json:"app_timezone"`
 		StagingURL        string `json:"staging_url"`
-		K8sManifestPaths  string `json:"k8s_manifest_paths"`
+		Port              int    `json:"port"`
+		HealthPath        string `json:"health_path"`
 		VulnSLACritical   int    `json:"vuln_sla_critical"`
 		VulnSLAHigh       int    `json:"vuln_sla_high"`
 		VulnSLAMedium     int    `json:"vuln_sla_medium"`
@@ -355,6 +356,18 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 			UserID uuid.UUID `json:"user_id"`
 			Role   string    `json:"role"`
 		} `json:"members"`
+		// InfraRequirements lists the shared infrastructure this service needs.
+		// Each entry maps to a row in service_infra_requirements.
+		InfraRequirements []struct {
+			ServiceType string          `json:"service_type"`
+			Config      json.RawMessage `json:"config"`
+		} `json:"infra_requirements"`
+		// TalksTo lists IDs of other services in the same application that this
+		// service calls. Used to generate NetworkPolicy CRs.
+		TalksTo []struct {
+			ProjectID uuid.UUID `json:"project_id"`
+			Port      int       `json:"port"`
+		} `json:"talks_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		jsonError(w, "name is required", http.StatusBadRequest)
@@ -368,9 +381,13 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 	if tz == "" {
 		tz = "Africa/Dar_es_Salaam"
 	}
-	manifestPaths := req.K8sManifestPaths
-	if manifestPaths == "" {
-		manifestPaths = "04-deployment.yaml"
+	port := req.Port
+	if port == 0 {
+		port = 8080
+	}
+	healthPath := req.HealthPath
+	if healthPath == "" {
+		healthPath = "/healthz"
 	}
 	var stagingURL *string
 	if req.StagingURL != "" {
@@ -407,7 +424,8 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		CreatedBy:         &user.ID,
 		AppTimezone:       tz,
 		StagingURL:        stagingURL,
-		K8sManifestPaths:  manifestPaths,
+		Port:              port,
+		HealthPath:        healthPath,
 		VulnSLACritical:   slaC,
 		VulnSLAHigh:       slaH,
 		VulnSLAMedium:     slaM,
@@ -421,6 +439,36 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonError(w, "create service: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Save infrastructure requirements.
+	for _, ir := range req.InfraRequirements {
+		cfg := ir.Config
+		if len(cfg) == 0 {
+			cfg = json.RawMessage(`{}`)
+		}
+		_, _ = h.db.SetServiceInfraRequirement(r.Context(), db.ServiceInfraRequirement{
+			ProjectID:   project.ID,
+			ServiceType: ir.ServiceType,
+			Config:      cfg,
+		})
+	}
+
+	// Save inter-service dependencies.
+	if len(req.TalksTo) > 0 {
+		deps := make([]db.ServiceDependency, 0, len(req.TalksTo))
+		for _, t := range req.TalksTo {
+			p := t.Port
+			if p == 0 {
+				p = 80
+			}
+			deps = append(deps, db.ServiceDependency{
+				FromProject: project.ID,
+				ToProject:   t.ProjectID,
+				Port:        p,
+			})
+		}
+		_ = h.db.SetServiceDependencies(r.Context(), project.ID, deps)
 	}
 
 	// Assign service members so the orchestrator can sync them to DefectDojo in step 10.

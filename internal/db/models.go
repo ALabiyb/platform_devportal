@@ -304,3 +304,15 @@ type ServiceInfraRequirement struct {
 	VaultPath   *string         `db:"vault_path"   json:"vault_path,omitempty"`
 	CreatedAt   time.Time       `db:"created_at"   json:"created_at"`
 }
+
+// ServiceDependency records a directed communication edge between two services
+// in the same application (from_project calls to_project on port).
+// Used to generate NetworkPolicy CRs at provision time.
+type ServiceDependency struct {
+	ID          uuid.UUID `db:"id"           json:"id"`
+	FromProject uuid.UUID `db:"from_project" json:"from_project"`
+	ToProject   uuid.UUID `db:"to_project"   json:"to_project"`
+	Port        int       `db:"port"         json:"port"`
+	Description string    `db:"description"  json:"description"`
+	CreatedAt   time.Time `db:"created_at"   json:"created_at"`
+}

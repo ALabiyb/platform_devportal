@@ -381,12 +381,15 @@ export function useCreateService(appId: string) {
       notification_email?: string;
       app_timezone?: string;
       staging_url?: string;
-      k8s_manifest_paths?: string;
+      port?: number;
+      health_path?: string;
       vuln_sla_critical?: number;
       vuln_sla_high?: number;
       vuln_sla_medium?: number;
       vuln_sla_low?: number;
       members?: { user_id: string; role: string }[];
+      infra_requirements?: { service_type: string; config: Record<string, unknown> }[];
+      talks_to?: { project_id: string; port: number }[];
     }) =>
       apiFetch<CreateProjectResponse>(`/api/v1/applications/${appId}/services`, {
         method: "POST",
