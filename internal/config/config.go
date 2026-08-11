@@ -65,11 +65,20 @@ type Config struct {
 	OIDCAdminGroup     string // Env: OIDC_ADMIN_GROUP      · Default: devportal-admins
 	OIDCDeveloperGroup string // Env: OIDC_DEVELOPER_GROUP  · Default: devportal-developers
 
-	// ── GitLab / Gitea ───────────────────────────────────────────────────────
-	// API client for Git operations (create repo, commit files, webhooks).
-	// Auth is handled separately (local or OIDC) — these are not OAuth fields.
-	GitLabURL   string // Env: GITLAB_URL   · REQUIRED
-	GitLabToken string // Env: GITLAB_TOKEN · REQUIRED (PAT scope: api)
+	// ── SCM Provider ─────────────────────────────────────────────────────────
+	// GIT_PROVIDER selects which adapter is used at runtime.
+	// "gitea"  → local Gitea instance (default)
+	// "gitlab" → GitLab (cloud or self-hosted)
+	// No code change needed to switch — just change .env and restart.
+	GitProvider string // Env: GIT_PROVIDER · Default: gitea
+
+	// GitLab — used when GIT_PROVIDER=gitlab
+	GitLabURL   string // Env: GITLAB_URL   · REQUIRED when provider=gitlab
+	GitLabToken string // Env: GITLAB_TOKEN · REQUIRED when provider=gitlab (PAT scope: api)
+
+	// Gitea — used when GIT_PROVIDER=gitea
+	GiteaURL   string // Env: GITEA_URL   · REQUIRED when provider=gitea
+	GiteaToken string // Env: GITEA_TOKEN · REQUIRED when provider=gitea (PAT scope: all)
 
 	// ── Organisation ─────────────────────────────────────────────────────────
 	// In v0.1 devportal has a single org created on first login.
@@ -127,7 +136,8 @@ type Config struct {
 	RegistryCredentialsID string // Env: REGISTRY_CREDENTIALS_ID · Default: robot-jenkins
 	GitCredentialsID      string // Env: GIT_CREDENTIALS_ID      · REQUIRED  (Jenkins credential ID for Git)
 	SharedLibraryURL      string // Env: SHARED_LIBRARY_URL      · REQUIRED  (Git URL of Jenkins shared library)
-	DependencyTrackURL    string // Env: DEPENDENCY_TRACK_URL    · REQUIRED
+	DependencyTrackURL      string // Env: DEPENDENCY_TRACK_URL       · REQUIRED
+	DependencyTrackAPIKeyID string // Env: DEPENDENCY_TRACK_API_KEY_ID · Jenkins credential ID holding the team API key
 	K8sManifestGroup      string // Env: K8S_MANIFEST_GROUP      · Default: kubernetes-manifest
 	IngressBaseDomain     string // Env: INGRESS_BASE_DOMAIN     · REQUIRED  (base domain for app ingress URLs)
 
@@ -135,6 +145,11 @@ type Config struct {
 	// Author on commits made by devportal (Jenkinsfile, manifests, VERSION).
 	BotName  string // Env: BOT_NAME  · Default: DevPortal Bot
 	BotEmail string // Env: BOT_EMAIL · REQUIRED
+
+	// ── Worker ───────────────────────────────────────────────────────────────
+	// WorkerConcurrency caps how many provisioning jobs run simultaneously.
+	// Increase this if you have many parallel service registrations.
+	WorkerConcurrency int // Env: WORKER_CONCURRENCY · Default: 3
 
 	// ── TLS ──────────────────────────────────────────────────────────────────
 	// Skips certificate validation for outbound calls to Jenkins, Harbor, etc.
@@ -185,9 +200,15 @@ func Load() *Config {
 		OIDCAdminGroup:     env("OIDC_ADMIN_GROUP", "devportal-admins"),
 		OIDCDeveloperGroup: env("OIDC_DEVELOPER_GROUP", "devportal-developers"),
 
-		// GitLab — only needed when provisioning projects
+		GitProvider: env("GIT_PROVIDER", "gitea"),
+
+		// GitLab — only needed when GIT_PROVIDER=gitlab
 		GitLabURL:   env("GITLAB_URL", ""),
 		GitLabToken: env("GITLAB_TOKEN", ""),
+
+		// Gitea — only needed when GIT_PROVIDER=gitea
+		GiteaURL:   env("GITEA_URL", ""),
+		GiteaToken: env("GITEA_TOKEN", ""),
 
 		OrgName: env("ORG_NAME", "My Organization"),
 		OrgSlug: env("ORG_SLUG", "default"),
@@ -228,13 +249,16 @@ func Load() *Config {
 		RegistryCredentialsID: env("REGISTRY_CREDENTIALS_ID", "robot-jenkins"),
 		GitCredentialsID:      env("GIT_CREDENTIALS_ID", ""),
 		SharedLibraryURL:      env("SHARED_LIBRARY_URL", ""),
-		DependencyTrackURL:    env("DEPENDENCY_TRACK_URL", ""),
+		DependencyTrackURL:      env("DEPENDENCY_TRACK_URL", ""),
+		DependencyTrackAPIKeyID: env("DEPENDENCY_TRACK_API_KEY_ID", "dependency-track-api-key"),
 		K8sManifestGroup:      env("K8S_MANIFEST_GROUP", "kubernetes-manifest"),
 		IngressBaseDomain:     env("INGRESS_BASE_DOMAIN", ""),
 
 		// Bot — only needed when committing generated files to GitLab
 		BotName:  env("BOT_NAME", "DevPortal Bot"),
 		BotEmail: env("BOT_EMAIL", "devportal@localhost"),
+
+		WorkerConcurrency: envInt("WORKER_CONCURRENCY", 3),
 
 		TLSSkipVerify: env("TLS_SKIP_VERIFY", "true") != "false",
 

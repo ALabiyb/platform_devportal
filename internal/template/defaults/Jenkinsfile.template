@@ -49,7 +49,10 @@ pipeline {
         %%%DEFECTDOJO_ENGAGEMENT_SECTION%%%
 
         // Dependency-Track — SBOM upload
-        DEPENDENCY_TRACK_URL = '%%%DEPENDENCY_TRACK_URL%%%'
+        DEPENDENCY_TRACK_URL        = '%%%DEPENDENCY_TRACK_URL%%%'
+        // ID of the Jenkins secret-text credential holding the Dependency-Track team API key.
+        // Create it at: Jenkins → Manage Credentials → (global) → Add → Secret text → ID = dependency-track-api-key
+        DEPENDENCY_TRACK_API_KEY_ID = '%%%DEPENDENCY_TRACK_API_KEY_ID%%%'
 
         // DAST — staging URL of this service on K8s cluster (leave empty to skip)
         %%%STAGING_URL_SECTION%%%
@@ -67,213 +70,283 @@ pipeline {
 
     stages {
 
-        // ── Always: checkout ─────────────────────────────────────────────────
+        // ── Outer guard: skip the main branch ────────────────────────────────
+        // main holds only DevPortal bootstrap files. Real work starts on dev.
+        // beforeAgent true: the when condition is checked before allocating any
+        // agent — main builds exit immediately without touching an executor.
 
-        stage('Checkout and Git Info') {
-            steps {
-                script {
-                    checkoutAndGitInfo(
-                        repo: env.GIT_REPO_URL,
-                        credentialsId: env.GIT_CREDENTIALS_ID,
-                        branch: env.BRANCH_NAME
-                    )
-                }
+        stage('DevPortal CI/CD') {
+            when {
+                beforeAgent true
+                not { branch 'main' }
             }
-        }
+            stages {
 
-        stage('Send Start Notification') {
-            steps {
-                script {
-                    sendStartNotification(
-                        subject: "🚀 Pipeline Started: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                        recipients: env.NOTIFICATION_EMAIL,
-                        triggeredBy: detectBuildTrigger()
-                    )
-                }
-            }
-        }
+                // ── Step 1: always checkout ───────────────────────────────────
+                // Must run before the inner guard can inspect the commit message.
 
-        // ── Build stages — skipped on uat and prod branches ──────────────────
-        // Image is built exactly once on dev; promoted to uat/prod without rebuilding.
-
-        stage('Build Artifact') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script { buildArtifact() }
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script {
-                    sonarSast(
-                        sonarServer: 'SonarQube Server',
-                        projectKey: "${env.IMAGE_NAME}",
-                        projectName: "${env.PROJECT_NAME}",
-                        waitForQualityGate: false,
-                        timeoutMinutes: 5
-                    )
-                }
-            }
-        }
-
-        stage('Dependency Check') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script {
-                    parallel(
-                        "OWASP Dependency Check": {
-                            owaspDependencyCheck(failOnCVSS: 0)
-                        },
-                        "OSV Scanner": {
-                            osvScanner(failOnCritical: false)
+                stage('Checkout and Git Info') {
+                    steps {
+                        script {
+                            checkoutAndGitInfo(
+                                repo: env.GIT_REPO_URL,
+                                credentialsId: env.GIT_CREDENTIALS_ID,
+                                branch: env.BRANCH_NAME
+                            )
                         }
-                    )
+                    }
                 }
-            }
-        }
 
-        stage('Vulnerability Scan - Docker') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script { vulnScanDocker() }
-            }
-        }
+                // ── Inner guard: skip DevPortal bootstrap commits ─────────────
+                // All files DevPortal commits during provisioning carry [skip ci]
+                // in the commit message. After checkout the HEAD message is read
+                // directly from git — reliable even for the very first build on a
+                // branch where the changelog would otherwise be empty.
+                //
+                // If [skip ci] is detected:
+                //   • currentBuild.description is set to DEVPORTAL_BOOTSTRAP
+                //   • This entire stage is SKIPPED (green) — no stages execute,
+                //     no agent used past this point, no notifications sent.
+                //   • post.success guard also checks the description so no email.
+                //
+                // Developer pushes never have [skip ci] → when returns true → runs.
 
-        stage('Build Docker Image and Publish') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script {
-                    // Tag: plain build number on dev (e.g. api-gateway:42).
-                    // Harbor retention keeps uat-* and version tags; dev tags can be GC'd.
-                    def result = buildDockerImageAndPush(
-                        imageName:              env.IMAGE_NAME,
-                        imageTag:               env.BUILD_NUMBER,
-                        harborProject:          env.HARBOR_PROJECT,
-                        registryUrl:            env.REGISTRY_URL,
-                        registryCredentialsId:  env.REGISTRY_CREDENTIALS_ID,
-                        pushToRegistry:         true,
-                        buildArgs: [
-                            GIT_AUTHOR  : env.GIT_AUTHOR,
-                            GIT_COMMIT  : env.GIT_COMMIT,
-                            BUILD_DATE  : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
-                            VERSION     : env.RELEASE_VERSION,
-                            APP_TIMEZONE: env.APP_TIMEZONE,
-                            APP_NAME    : env.PROJECT_NAME
-                        ]
-                    )
-                    env.FINAL_IMAGE_NAME = result.localImageName
-                }
-            }
-        }
+                stage('CI Pipeline') {
+                    when {
+                        expression {
+                            def msg = sh(
+                                script: 'git log -1 --pretty=%B HEAD',
+                                returnStdout: true
+                            ).trim()
+                            if (msg.contains('[skip ci]')) {
+                                currentBuild.description = 'DEVPORTAL_BOOTSTRAP'
+                                return false
+                            }
+                            return true
+                        }
+                    }
+                    stages {
 
-        stage('Sign Image') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script {
-                    signImage(
-                        registryUrl:   env.REGISTRY_URL,
-                        harborProject: env.HARBOR_PROJECT,
-                        imageName:     env.IMAGE_NAME,
-                        imageTag:      env.BUILD_NUMBER
-                    )
-                }
-            }
-        }
+                        // ── Guard: dev branch needs real source code ──────────
+                        // Stops early when the repo has only bootstrap files.
+                        // Applies to dev only — uat/prod promote an image.
 
-        stage('Generate & Upload SBOM') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script {
-                    generateSbom(
-                        projectName:    env.IMAGE_NAME,
-                        projectVersion: env.APP_VERSION
-                    )
-                }
-            }
-        }
+                        stage('Detect Source Code') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script {
+                                    def sourceIndicators = [
+                                        'pom.xml', 'build.gradle', 'build.gradle.kts',
+                                        'package.json', 'go.mod', 'requirements.txt',
+                                        'pyproject.toml', 'setup.py', 'pubspec.yaml'
+                                    ]
+                                    def hasSource = sourceIndicators.any { fileExists(it) }
+                                    if (!hasSource) {
+                                        currentBuild.description = 'NO_SOURCE'
+                                        error 'No application source code found. Push your source code to dev to trigger a real build.'
+                                    }
+                                }
+                            }
+                        }
 
-        stage('Vulnerability Scan - Application Image') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script { vulnScanApplicationImage() }
-            }
-        }
+                        stage('Send Start Notification') {
+                            steps {
+                                script {
+                                    sendStartNotification(
+                                        subject: "🚀 Pipeline Started: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                                        recipients: env.NOTIFICATION_EMAIL,
+                                        triggeredBy: detectBuildTrigger()
+                                    )
+                                }
+                            }
+                        }
 
-        stage('Publish Security Results') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script { publishToDefectDojo() }
-            }
-        }
+                        // ── Build stages — skipped on uat and prod ────────────
+                        // Image is built once on dev; promoted to uat/prod.
 
-        stage('Update Dev Manifest') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script { k8sManifestScanAndUpdate() }
-            }
-        }
+                        stage('Build Artifact') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script { buildArtifact() }
+                            }
+                        }
 
-        stage('DAST Scan') {
-            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
-            steps {
-                script {
-                    dastScan(
-                        stagingUrl:  env.STAGING_URL,
-                        scanType:    'baseline',
-                        waitSeconds: 90
-                    )
-                }
-            }
-        }
+                        stage('SonarQube Analysis') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script {
+                                    sonarSast(
+                                        sonarServer: 'SonarQube Server',
+                                        projectKey: "${env.IMAGE_NAME}",
+                                        projectName: "${env.PROJECT_NAME}",
+                                        waitForQualityGate: false,
+                                        timeoutMinutes: 5
+                                    )
+                                }
+                            }
+                        }
 
-        // ── UAT promotion ─────────────────────────────────────────────────────
-        // Reads the image tag from the dev manifest, retags as uat-{devTag} so
-        // Harbor can apply a separate retention policy from dev tags.
+                        stage('Dependency Check') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script {
+                                    parallel(
+                                        "OWASP Dependency Check": {
+                                            owaspDependencyCheck(failOnCVSS: 0)
+                                        },
+                                        "OSV Scanner": {
+                                            osvScanner(failOnCritical: false)
+                                        }
+                                    )
+                                }
+                            }
+                        }
 
-        stage('Promote to UAT') {
-            when { branch 'uat' }
-            steps {
-                script {
-                    promoteImage(
-                        fromBranch:  env.K8S_MANIFEST_BRANCH,
-                        toBranch:    env.K8S_MANIFEST_UAT_BRANCH,
-                        reTagPrefix: 'uat'
-                    )
-                }
-            }
-        }
+                        stage('Vulnerability Scan - Docker') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script { vulnScanDocker() }
+                            }
+                        }
 
-        // ── Production stages ─────────────────────────────────────────────────
-        // Reads the image tag from the uat manifest, retags as the VERSION file
-        // value — a named release tag that Harbor retention never deletes.
+                        stage('Build Docker Image and Publish') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script {
+                                    // Tag: plain build number on dev (e.g. api-gateway:42).
+                                    // Harbor retention keeps uat-* and version tags; dev tags can be GC'd.
+                                    def result = buildDockerImageAndPush(
+                                        imageName:              env.IMAGE_NAME,
+                                        imageTag:               env.BUILD_NUMBER,
+                                        harborProject:          env.HARBOR_PROJECT,
+                                        registryUrl:            env.REGISTRY_URL,
+                                        registryCredentialsId:  env.REGISTRY_CREDENTIALS_ID,
+                                        pushToRegistry:         true,
+                                        buildArgs: [
+                                            GIT_AUTHOR  : env.GIT_AUTHOR,
+                                            GIT_COMMIT  : env.GIT_COMMIT,
+                                            BUILD_DATE  : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
+                                            VERSION     : env.RELEASE_VERSION,
+                                            APP_TIMEZONE: env.APP_TIMEZONE,
+                                            APP_NAME    : env.PROJECT_NAME
+                                        ]
+                                    )
+                                    env.FINAL_IMAGE_NAME = result.localImageName
+                                }
+                            }
+                        }
 
-        stage('Production Approval') {
-            when { branch 'prod' }
-            steps {
-                script {
-                    productionApproval(
-                        releaseVersion: env.RELEASE_VERSION,
-                        recipients:     env.NOTIFICATION_EMAIL,
-                        timeoutMinutes: 30
-                    )
-                }
-            }
-        }
+                        stage('Sign Image') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script {
+                                    signImage(
+                                        registryUrl:   env.REGISTRY_URL,
+                                        harborProject: env.HARBOR_PROJECT,
+                                        imageName:     env.IMAGE_NAME,
+                                        imageTag:      env.BUILD_NUMBER
+                                    )
+                                }
+                            }
+                        }
 
-        stage('Promote to Production') {
-            when { branch 'prod' }
-            steps {
-                script {
-                    promoteImage(
-                        fromBranch: env.K8S_MANIFEST_UAT_BRANCH,
-                        toBranch:   env.K8S_MANIFEST_PROD_BRANCH,
-                        reTagAs:    env.RELEASE_VERSION
-                    )
-                }
-            }
-        }
+                        stage('Generate & Upload SBOM') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script {
+                                    generateSbom(
+                                        projectName:    env.IMAGE_NAME,
+                                        projectVersion: env.APP_VERSION
+                                    )
+                                }
+                            }
+                        }
+
+                        stage('Vulnerability Scan - Application Image') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script { vulnScanApplicationImage() }
+                            }
+                        }
+
+                        stage('Publish Security Results') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script { publishToDefectDojo() }
+                            }
+                        }
+
+                        stage('Update Dev Manifest') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script { k8sManifestScanAndUpdate() }
+                            }
+                        }
+
+                        stage('DAST Scan') {
+                            when { expression { !['uat', 'prod'].contains(env.BRANCH_NAME) } }
+                            steps {
+                                script {
+                                    dastScan(
+                                        stagingUrl:  env.STAGING_URL,
+                                        scanType:    'baseline',
+                                        waitSeconds: 90
+                                    )
+                                }
+                            }
+                        }
+
+                        // ── UAT promotion ─────────────────────────────────────
+                        // Reads the image tag from the dev manifest, retags as uat-{devTag}.
+
+                        stage('Promote to UAT') {
+                            when { branch 'uat' }
+                            steps {
+                                script {
+                                    promoteImage(
+                                        fromBranch:  env.K8S_MANIFEST_BRANCH,
+                                        toBranch:    env.K8S_MANIFEST_UAT_BRANCH,
+                                        reTagPrefix: 'uat'
+                                    )
+                                }
+                            }
+                        }
+
+                        // ── Production stages ──────────────────────────────────
+                        // Reads the image tag from the uat manifest, retags as VERSION.
+
+                        stage('Production Approval') {
+                            when { branch 'prod' }
+                            steps {
+                                script {
+                                    productionApproval(
+                                        releaseVersion: env.RELEASE_VERSION,
+                                        recipients:     env.NOTIFICATION_EMAIL,
+                                        timeoutMinutes: 30
+                                    )
+                                }
+                            }
+                        }
+
+                        stage('Promote to Production') {
+                            when { branch 'prod' }
+                            steps {
+                                script {
+                                    promoteImage(
+                                        fromBranch: env.K8S_MANIFEST_UAT_BRANCH,
+                                        toBranch:   env.K8S_MANIFEST_PROD_BRANCH,
+                                        reTagAs:    env.RELEASE_VERSION
+                                    )
+                                }
+                            }
+                        }
+
+                    } // end CI Pipeline stages
+                } // end stage('CI Pipeline')
+
+            } // end DevPortal CI/CD stages
+        } // end stage('DevPortal CI/CD')
+
     }
 
     post {
@@ -294,19 +367,25 @@ pipeline {
 
         success {
             script {
-                sendSuccessNotification(
-                    recipients: env.NOTIFICATION_EMAIL,
-                    triggeredBy: detectBuildTrigger()
-                )
+                // Suppress notification for bootstrap commits (all CI Pipeline stages skipped)
+                // and for main (which always skips everything by design).
+                if (env.BRANCH_NAME != 'main' && currentBuild.description != 'DEVPORTAL_BOOTSTRAP') {
+                    sendSuccessNotification(
+                        recipients: env.NOTIFICATION_EMAIL,
+                        triggeredBy: detectBuildTrigger()
+                    )
+                }
             }
         }
 
         failure {
             script {
-                sendFailureNotification(
-                    recipients: env.NOTIFICATION_EMAIL,
-                    triggeredBy: detectBuildTrigger()
-                )
+                if (currentBuild.description != 'NO_SOURCE') {
+                    sendFailureNotification(
+                        recipients: env.NOTIFICATION_EMAIL,
+                        triggeredBy: detectBuildTrigger()
+                    )
+                }
             }
         }
 

@@ -109,7 +109,8 @@ func (g *Generator) RenderJenkinsfile(templateStr string, input JenkinsfileInput
 		"%%%GIT_CREDENTIALS_ID%%%":      g.cfg.GitCredentialsID,
 		"%%%SHARED_LIBRARY_URL%%%":      g.cfg.SharedLibraryURL,
 		"%%%DEFECTDOJO_URL%%%":          g.cfg.DefectDojoURL,
-		"%%%DEPENDENCY_TRACK_URL%%%":    g.cfg.DependencyTrackURL,
+		"%%%DEPENDENCY_TRACK_URL%%%":          g.cfg.DependencyTrackURL,
+		"%%%DEPENDENCY_TRACK_API_KEY_ID%%%":   g.cfg.DependencyTrackAPIKeyID,
 	}
 
 	result := templateStr
