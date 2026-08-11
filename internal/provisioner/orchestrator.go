@@ -39,6 +39,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -393,6 +394,54 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 		return err
 	}
 
+	// ── Pre-load infra requirements and service dependencies ─────────────────
+	// Loaded before step 12 so results are available to both the manifest commit
+	// (step 12) and the ArgoCD Application creation (steps 13–15).
+	var tmplInfraReqs []tmpl.InfraRequirement
+	var tmplDeps []tmpl.ServiceDep
+	if infraDBReqs, err := o.database.ListServiceInfraRequirements(ctx, projectID); err != nil {
+		slog.Warn("provisioner: could not load infra requirements (non-fatal)", "err", err)
+	} else {
+		for _, req := range infraDBReqs {
+			var cfg map[string]string
+			if len(req.Config) > 0 {
+				_ = json.Unmarshal(req.Config, &cfg)
+			}
+			if cfg == nil {
+				cfg = map[string]string{}
+			}
+			tmplInfraReqs = append(tmplInfraReqs, tmpl.InfraRequirement{
+				ServiceType: req.ServiceType,
+				Config:      cfg,
+			})
+		}
+	}
+	if dbDeps, err := o.database.ListServiceDependencies(ctx, projectID); err != nil {
+		slog.Warn("provisioner: could not load service dependencies (non-fatal)", "err", err)
+	} else {
+		for _, dep := range dbDeps {
+			targetProj, err := o.database.GetProject(ctx, dep.ToProject)
+			if err != nil {
+				slog.Warn("provisioner: could not resolve dep slug (skipping)", "to_project", dep.ToProject, "err", err)
+				continue
+			}
+			tmplDeps = append(tmplDeps, tmpl.ServiceDep{
+				TargetSlug: targetProj.Slug,
+				Port:       dep.Port,
+			})
+		}
+	}
+	platform := tmpl.PlatformRefs{
+		CNPGClusterName:          o.cfg.CNPGClusterName,
+		CNPGClusterNamespace:     o.cfg.CNPGClusterNamespace,
+		KafkaClusterName:         o.cfg.KafkaClusterName,
+		KafkaClusterNamespace:    o.cfg.KafkaClusterNamespace,
+		RabbitMQClusterName:      o.cfg.RabbitMQClusterName,
+		RabbitMQClusterNamespace: o.cfg.RabbitMQClusterNamespace,
+		RedisNamespace:           o.cfg.RedisNamespace,
+		MinIONamespace:           o.cfg.MinIONamespace,
+	}
+
 	// ── Step 12: Ensure manifest group + shared manifest repo + commit all env manifests ──
 	// One repo per application (e.g. restaurant-pos-k8s), one branch per environment
 	// (dev / uat / prod), one subdirectory per service (api-gateway/).
@@ -427,6 +476,11 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 				Environment: env,
 				Image:       image,
 				IngressHost: ingressHost,
+				Port:        p.Port,
+				HealthPath:  p.HealthPath,
+				InfraReqs:   tmplInfraReqs,
+				Deps:        tmplDeps,
+				Platform:    platform,
 			})
 
 			files := make([]plugin.CommitFile, 0, len(kFiles))
@@ -468,7 +522,7 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 		ingressHost := p.Slug + "-" + envName + "." + o.cfg.IngressBaseDomain
 
 		if err := o.step(ctx, projectID, idx, func() error {
-			// ArgoCD Application
+			// ArgoCD Application — service overlay (Deployment, Service, Ingress, NetworkPolicy)
 			if e := o.gitops.CreateApplication(ctx, plugin.CreateAppInput{
 				Name:           appName,
 				Namespace:      namespace,
@@ -478,6 +532,22 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 				AutoSync:       true,
 			}); e != nil {
 				return fmt.Errorf("argocd %s: %w", envName, e)
+			}
+
+			// ArgoCD Application — platform operator CRs (CNPG, Kafka, RabbitMQ)
+			// Only created when the service declared infra requirements.
+			if len(tmplInfraReqs) > 0 {
+				platformAppName := appName + "-platform"
+				if e := o.gitops.CreateApplication(ctx, plugin.CreateAppInput{
+					Name:           platformAppName,
+					Namespace:      "argocd",
+					RepoURL:        manifestRepoURL,
+					Path:           p.Slug + "/infra/" + envName,
+					TargetRevision: envName,
+					AutoSync:       true,
+				}); e != nil {
+					slog.Warn("provisioner: platform ArgoCD app creation failed (non-fatal)", "app", platformAppName, "err", e)
+				}
 			}
 
 			// Provision app database

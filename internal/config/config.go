@@ -141,6 +141,18 @@ type Config struct {
 	K8sManifestGroup      string // Env: K8S_MANIFEST_GROUP      · Default: kubernetes-manifest
 	IngressBaseDomain     string // Env: INGRESS_BASE_DOMAIN     · REQUIRED  (base domain for app ingress URLs)
 
+	// ── Platform Infra Cluster References ────────────────────────────────────
+	// Used by the manifest generator to produce Kubernetes operator CRs
+	// (CNPG, Strimzi, RabbitMQ) and NetworkPolicy egress rules at provision time.
+	CNPGClusterName          string // Env: CNPG_CLUSTER_NAME          · Default: postgres-cluster
+	CNPGClusterNamespace     string // Env: CNPG_CLUSTER_NAMESPACE      · Default: postgres
+	KafkaClusterName         string // Env: KAFKA_CLUSTER_NAME          · Default: kafka-cluster
+	KafkaClusterNamespace    string // Env: KAFKA_CLUSTER_NAMESPACE     · Default: kafka
+	RabbitMQClusterName      string // Env: RABBITMQ_CLUSTER_NAME       · Default: rabbitmq-cluster
+	RabbitMQClusterNamespace string // Env: RABBITMQ_CLUSTER_NAMESPACE  · Default: rabbitmq
+	RedisNamespace           string // Env: REDIS_NAMESPACE             · Default: redis
+	MinIONamespace           string // Env: MINIO_NAMESPACE             · Default: minio
+
 	// ── Git Bot Commit Author ────────────────────────────────────────────────
 	// Author on commits made by devportal (Jenkinsfile, manifests, VERSION).
 	BotName  string // Env: BOT_NAME  · Default: DevPortal Bot
@@ -253,6 +265,15 @@ func Load() *Config {
 		DependencyTrackAPIKeyID: env("DEPENDENCY_TRACK_API_KEY_ID", "dependency-track-api-key"),
 		K8sManifestGroup:      env("K8S_MANIFEST_GROUP", "kubernetes-manifest"),
 		IngressBaseDomain:     env("INGRESS_BASE_DOMAIN", ""),
+
+		CNPGClusterName:          env("CNPG_CLUSTER_NAME", "postgres-cluster"),
+		CNPGClusterNamespace:     env("CNPG_CLUSTER_NAMESPACE", "postgres"),
+		KafkaClusterName:         env("KAFKA_CLUSTER_NAME", "kafka-cluster"),
+		KafkaClusterNamespace:    env("KAFKA_CLUSTER_NAMESPACE", "kafka"),
+		RabbitMQClusterName:      env("RABBITMQ_CLUSTER_NAME", "rabbitmq-cluster"),
+		RabbitMQClusterNamespace: env("RABBITMQ_CLUSTER_NAMESPACE", "rabbitmq"),
+		RedisNamespace:           env("REDIS_NAMESPACE", "redis"),
+		MinIONamespace:           env("MINIO_NAMESPACE", "minio"),
 
 		// Bot — only needed when committing generated files to GitLab
 		BotName:  env("BOT_NAME", "DevPortal Bot"),
