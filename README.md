@@ -6,6 +6,8 @@ An Internal Developer Platform (IDP) that provisions the full DevSecOps toolchai
 
 ---
 
+> **Full platform architecture, IDP vision, manifest repo structure, service dependency model, GitOps flow, and roadmap → [`ARCHITECTURE.md`](ARCHITECTURE.md)**
+
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
@@ -229,7 +231,7 @@ All other variables are optional at startup. The UI and all admin features work 
 | DefectDojo | `DEFECTDOJO_URL`, `DEFECTDOJO_TOKEN` |
 | ArgoCD | `ARGOCD_URL`, `ARGOCD_TOKEN`, `ARGOCD_INSECURE` |
 | App DB provisioning | `APP_DB_HOST`, `APP_DB_PORT`, `APP_DB_ADMIN_USER`, `APP_DB_ADMIN_PASSWORD` |
-| Jenkinsfile generation | `REGISTRY_URL`, `REGISTRY_CREDENTIALS_ID`, `GIT_CREDENTIALS_ID`, `SHARED_LIBRARY_URL`, `DEPENDENCY_TRACK_URL`, `K8S_MANIFEST_GROUP`, `INGRESS_BASE_DOMAIN` |
+| Jenkinsfile generation | `REGISTRY_URL`, `REGISTRY_CREDENTIALS_ID`, `GIT_CREDENTIALS_ID`, `SHARED_LIBRARY_URL`, `DEPENDENCY_TRACK_URL`, `DEPENDENCY_TRACK_API_KEY_ID`, `K8S_MANIFEST_GROUP`, `INGRESS_BASE_DOMAIN` |
 | Worker | `WORKER_CONCURRENCY` (default: 3) |
 | Branding | `BRAND_APP_NAME`, `BRAND_COMPANY`, `BRAND_PRIMARY_HUE`, `BRAND_LOGO_URL` |
 | TLS | `TLS_SKIP_VERIFY` |
@@ -323,6 +325,7 @@ Create these credentials in **Manage Jenkins → Credentials → System → Glob
 | `gitea-token` | Username with password | Gitea bot username + token | Checkout and webhook auth |
 | `cosign-private-key` | Secret file | Upload `cosign.key` | Sign images with cosign |
 | `cosign-password` | Secret text | cosign key passphrase | Decrypt the signing key |
+| `dependency-track-api-key` | Secret text | Dependency-Track team API key | Upload SBOMs — get from DT UI: Administration → Teams → API Keys |
 
 ### DevPortal env vars that feed into generated Jenkinsfiles
 
@@ -496,4 +499,4 @@ DevPortal — NexBridge Technologies
 ---
 
 **Organisation:** NexBridge Technologies  
-**Last Updated:** 2026-08-09 (Jenkins + Cosign setup)
+**Last Updated:** 2026-08-11 — see [`ARCHITECTURE.md`](ARCHITECTURE.md) for full IDP design and roadmap
