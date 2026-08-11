@@ -3,45 +3,77 @@
 // Contact: saidlabiybm@gmail.com
 // ---------------------------------------------------------------------------
 
-// manifest.go generates Kubernetes manifests for a project environment.
-// Each environment (dev / uat / prod) gets its own set of YAML files
-// committed to the manifest repository for ArgoCD to sync.
-
+// manifest.go generates a Kustomize base+overlays file tree for a provisioned service.
+// The orchestrator iterates the returned KustomizeFiles map and commits each
+// path→content pair to the manifest repository.
+//
+// Repository layout produced (one branch per environment):
+//
+//	<service>/base/kustomization.yaml            — lists base resources
+//	<service>/base/deployment.yaml               — env-agnostic Deployment (DEVPORTAL_IMAGE_PLACEHOLDER)
+//	<service>/base/service.yaml                  — ClusterIP Service
+//	<service>/overlays/<env>/kustomization.yaml  — sets namespace, resolves image, applies patches
+//	<service>/overlays/<env>/namespace.yaml      — creates the Namespace object
+//	<service>/overlays/<env>/ingress.yaml        — Ingress with env-specific host
+//	<service>/overlays/<env>/patch-resources.yaml — replicas + CPU/mem per env tier
+//	<service>/overlays/<env>/hpa.yaml            — HPA (prod only)
+//
+// Jenkins updates the image tag by running:
+//
+//	kustomize edit set image DEVPORTAL_IMAGE_PLACEHOLDER=<registry>/<project>/<service>:<build>
+//
+// inside the relevant overlay directory, then committing the change.
 package template
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ManifestInput holds the per-environment values needed to render K8s manifests.
 type ManifestInput struct {
 	AppName     string // e.g. "payment-service"
 	Namespace   string // K8s namespace, e.g. "payment-service-dev"
 	Environment string // "dev" | "uat" | "prod"
-	Image       string // full image ref, e.g. "registry.example.com/backend/payment-service:latest"
+	Image       string // full image ref, e.g. "registry.example.com/nexbridge/payment-service:latest"
 	IngressHost string // e.g. "payment-service-dev.apps.example.com"
 }
 
-// ManifestSet is the rendered collection of YAML files for one environment.
-type ManifestSet struct {
-	Namespace  string // namespace.yaml content
-	Deployment string // deployment.yaml content
-	Service    string // service.yaml content
-	Ingress    string // ingress.yaml content
-	HPA        string // hpa.yaml content (prod only; empty for dev/uat)
-}
+// KustomizeFiles maps repository-relative file path → YAML content.
+// Every entry is committed to the manifest repo by the orchestrator.
+type KustomizeFiles map[string]string
 
-// Manifests renders all K8s YAML files for a single environment.
-func (g *Generator) Manifests(input ManifestInput) ManifestSet {
-	replicas, cpu, mem, cpuLim, memLim := resourceProfile(input.Environment)
-	return ManifestSet{
-		Namespace:  renderNamespace(input),
-		Deployment: renderDeployment(input, replicas, cpu, mem, cpuLim, memLim),
-		Service:    renderService(input),
-		Ingress:    renderIngress(input),
-		HPA:        renderHPA(input),
+// KustomizeManifests returns the complete Kustomize file tree for one environment.
+// base/ files are identical across all environments — committing them on each
+// branch is idempotent and ensures ArgoCD always has a consistent base to reference.
+func (g *Generator) KustomizeManifests(input ManifestInput) KustomizeFiles {
+	replicas, cpuReq, memReq, cpuLim, memLim := resourceProfile(input.Environment)
+	imageName, imageTag := splitImage(input.Image)
+
+	base    := input.AppName + "/base"
+	overlay := input.AppName + "/overlays/" + input.Environment
+
+	files := KustomizeFiles{
+		// ── Base — env-agnostic, identical on every branch ──────────────────
+		base + "/kustomization.yaml": renderBaseKustomization(),
+		base + "/deployment.yaml":    renderBaseDeployment(input.AppName),
+		base + "/service.yaml":       renderBaseService(input.AppName),
+
+		// ── Overlay — env-specific ───────────────────────────────────────────
+		overlay + "/kustomization.yaml":   renderOverlayKustomization(input, imageName, imageTag),
+		overlay + "/namespace.yaml":       renderNamespace(input),
+		overlay + "/ingress.yaml":         renderIngress(input),
+		overlay + "/patch-resources.yaml": renderResourcePatch(input.AppName, replicas, cpuReq, memReq, cpuLim, memLim),
 	}
+
+	if input.Environment == "prod" {
+		files[overlay+"/hpa.yaml"] = renderHPA(input.AppName, input.Namespace)
+	}
+
+	return files
 }
 
-// resourceProfile returns resource requests/limits tuned per environment.
+// resourceProfile returns replica count and resource requests/limits per environment tier.
 func resourceProfile(env string) (replicas int, cpuReq, memReq, cpuLim, memLim string) {
 	switch env {
 	case "prod":
@@ -53,52 +85,67 @@ func resourceProfile(env string) (replicas int, cpuReq, memReq, cpuLim, memLim s
 	}
 }
 
-func renderNamespace(i ManifestInput) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-  labels:
-    app.kubernetes.io/managed-by: devportal
-    environment: %s
-`, i.Namespace, i.Environment)
+// splitImage splits "registry/project/name:tag" into (name, tag).
+// Handles the edge case where the tag contains a slash (unlikely but safe).
+func splitImage(image string) (name, tag string) {
+	idx := strings.LastIndex(image, ":")
+	if idx < 0 || strings.Contains(image[idx:], "/") {
+		return image, "latest"
+	}
+	return image[:idx], image[idx+1:]
 }
 
-func renderDeployment(i ManifestInput, replicas int, cpuReq, memReq, cpuLim, memLim string) string {
+// ── Base renderers ─────────────────────────────────────────────────────────────
+
+func renderBaseKustomization() string {
+	return `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Base resources — env-agnostic. Overlays reference ../../base and add:
+#   namespace.yaml, ingress.yaml, patch-resources.yaml (+ hpa.yaml for prod)
+resources:
+  - deployment.yaml
+  - service.yaml
+# Generated by DevPortal — NexBridge Technologies
+`
+}
+
+func renderBaseDeployment(appName string) string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: %s
-  namespace: %s
+  name: %[1]s
   labels:
-    app: %s
-    environment: %s
+    app: %[1]s
     app.kubernetes.io/managed-by: devportal
 spec:
-  replicas: %d
+  replicas: 1
   selector:
     matchLabels:
-      app: %s
+      app: %[1]s
   template:
     metadata:
       labels:
-        app: %s
-        environment: %s
+        app: %[1]s
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-        - name: %s
-          image: %s
+        - name: %[1]s
+          # Image resolved by each overlay via Kustomize images: directive.
+          # Jenkins updates the tag by running:
+          #   kustomize edit set image DEVPORTAL_IMAGE_PLACEHOLDER=<registry>/<service>:<build>
+          image: DEVPORTAL_IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: http
-          resources:
-            requests:
-              cpu: %s
-              memory: %s
-            limits:
-              cpu: %s
-              memory: %s
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           livenessProbe:
             httpGet:
               path: /healthz
@@ -113,93 +160,136 @@ spec:
             periodSeconds: 5
           envFrom:
             - configMapRef:
-                name: %s-config
-            - secretRef:
-                name: %s-secret
+                name: %[1]s-config
                 optional: true
-`,
-		i.AppName, i.Namespace,
-		i.AppName, i.Environment,
-		replicas,
-		i.AppName,
-		i.AppName, i.Environment,
-		i.AppName, i.Image,
-		cpuReq, memReq, cpuLim, memLim,
-		i.AppName, i.AppName,
-	)
+            - secretRef:
+                name: %[1]s-secret
+                optional: true
+`, appName)
 }
 
-func renderService(i ManifestInput) string {
+func renderBaseService(appName string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
-  name: %s
-  namespace: %s
+  name: %[1]s
   labels:
-    app: %s
-    environment: %s
+    app: %[1]s
     app.kubernetes.io/managed-by: devportal
 spec:
   selector:
-    app: %s
+    app: %[1]s
   ports:
     - port: 80
       targetPort: 8080
       name: http
   type: ClusterIP
-`, i.AppName, i.Namespace, i.AppName, i.Environment, i.AppName)
+`, appName)
+}
+
+// ── Overlay renderers ──────────────────────────────────────────────────────────
+
+func renderOverlayKustomization(i ManifestInput, imageName, imageTag string) string {
+	extraResources := ""
+	if i.Environment == "prod" {
+		extraResources = "  - hpa.yaml\n"
+	}
+	return fmt.Sprintf(`apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: %s
+resources:
+  - ../../base
+  - namespace.yaml
+  - ingress.yaml
+%simages:
+  - name: DEVPORTAL_IMAGE_PLACEHOLDER
+    newName: %s
+    newTag: %s
+patches:
+  - path: patch-resources.yaml
+    target:
+      kind: Deployment
+      name: %s
+`, i.Namespace, extraResources, imageName, imageTag, i.AppName)
+}
+
+func renderNamespace(i ManifestInput) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+  labels:
+    app.kubernetes.io/managed-by: devportal
+    environment: %s
+`, i.Namespace, i.Environment)
 }
 
 func renderIngress(i ManifestInput) string {
 	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: %s
-  namespace: %s
+  name: %[1]s
   labels:
-    app: %s
-    environment: %s
+    app: %[1]s
+    environment: %[2]s
     app.kubernetes.io/managed-by: devportal
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   rules:
-    - host: %s
+    - host: %[3]s
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: %s
+                name: %[1]s
                 port:
                   name: http
   tls:
     - hosts:
-        - %s
-      secretName: %s-tls
-`, i.AppName, i.Namespace, i.AppName, i.Environment, i.IngressHost, i.AppName, i.IngressHost, i.AppName)
+        - %[3]s
+      secretName: %[1]s-tls
+`, i.AppName, i.Environment, i.IngressHost)
 }
 
-// renderHPA generates a HorizontalPodAutoscaler for prod; returns empty for dev/uat.
-func renderHPA(i ManifestInput) string {
-	if i.Environment != "prod" {
-		return ""
-	}
+func renderResourcePatch(appName string, replicas int, cpuReq, memReq, cpuLim, memLim string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s
+spec:
+  replicas: %d
+  template:
+    spec:
+      containers:
+        - name: %s
+          resources:
+            requests:
+              cpu: %s
+              memory: %s
+            limits:
+              cpu: %s
+              memory: %s
+`, appName, replicas, appName, cpuReq, memReq, cpuLim, memLim)
+}
+
+func renderHPA(appName, namespace string) string {
 	return fmt.Sprintf(`apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: %s
-  namespace: %s
+  name: %[1]s
+  namespace: %[2]s
   labels:
-    app: %s
+    app: %[1]s
     app.kubernetes.io/managed-by: devportal
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: %s
+    name: %[1]s
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -215,5 +305,5 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
-`, i.AppName, i.Namespace, i.AppName, i.AppName)
+`, appName, namespace)
 }

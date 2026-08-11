@@ -82,7 +82,9 @@ type JenkinsfileInput struct {
 	ManifestRepoURL    string // e.g. "http://gitea:3000/nexbridge/restaurant-pos-k8s.git"
 	AppTimezone        string // e.g. "Africa/Dar_es_Salaam"
 	StagingURL         string // optional — leave empty to skip DAST
-	K8sManifestPaths   string // e.g. "api-gateway/deployment.yaml"
+	// K8sManifestPaths is kept for DB compatibility but no longer used in rendering.
+	// Overlay paths are derived from AppName: <AppName>/overlays/{dev,uat,prod}
+	K8sManifestPaths string
 	EngagementID       int    // DefectDojo engagement ID (0 = not yet created)
 }
 
@@ -151,10 +153,6 @@ func stagingSection(stagingURL string) string {
 }
 
 func k8sSection(input JenkinsfileInput, gitCredID string) string {
-	paths := input.K8sManifestPaths
-	if paths == "" {
-		paths = input.AppName + "/deployment.yaml"
-	}
 	if input.ManifestRepoURL != "" {
 		return fmt.Sprintf(
 			"K8S_MANIFEST_REPO_URL       = '%s'\n"+
@@ -162,8 +160,11 @@ func k8sSection(input JenkinsfileInput, gitCredID string) string {
 				"        K8S_MANIFEST_BRANCH         = 'dev'\n"+
 				"        K8S_MANIFEST_UAT_BRANCH     = 'uat'\n"+
 				"        K8S_MANIFEST_PROD_BRANCH    = 'prod'\n"+
-				"        K8S_MANIFEST_PATHS          = '%s'",
-			input.ManifestRepoURL, gitCredID, paths,
+				"        // Kustomize overlay directories — Jenkins runs 'kustomize edit set image' here\n"+
+				"        K8S_OVERLAY_DEV             = '%[3]s/overlays/dev'\n"+
+				"        K8S_OVERLAY_UAT             = '%[3]s/overlays/uat'\n"+
+				"        K8S_OVERLAY_PROD            = '%[3]s/overlays/prod'",
+			input.ManifestRepoURL, gitCredID, input.AppName,
 		)
 	}
 	return fmt.Sprintf(
