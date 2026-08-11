@@ -203,6 +203,43 @@ const BUILD_TOOLS = [
   { value: "flutter-web",    label: "Flutter Web" },
 ];
 
+// ── Service mesh topology ──────────────────────────────────────────────────────
+
+const TOPO_CX = 245, TOPO_CY = 155, TOPO_R = 112;
+
+interface TopoNode {
+  id: string; icon: string; label: string; sub: string;
+  color: string; angle: number; steps: number[];
+}
+
+// Maps each platform node to 1-based provisioning step indices
+const TOPO_NODES: TopoNode[] = [
+  { id: "defectdojo", icon: "🛡️", label: "DefectDojo", sub: "Security hub",       color: "#a78bfa", angle: -90,  steps: [1, 2] },
+  { id: "gitea",      icon: "🐙", label: "SCM",        sub: "Source control",     color: "#60a5fa", angle: -30,  steps: [3, 4, 5, 11] },
+  { id: "jenkins",    icon: "🤖", label: "Jenkins",    sub: "CI/CD pipeline",     color: "#fb923c", angle: 30,   steps: [6, 7, 8] },
+  { id: "harbor",     icon: "⚓", label: "Harbor",     sub: "Container registry", color: "#34d399", angle: 90,   steps: [9, 10] },
+  { id: "kubernetes", icon: "☸️", label: "Kubernetes", sub: "Workloads",          color: "#38bdf8", angle: 150,  steps: [12, 13, 14, 15] },
+  { id: "argocd",     icon: "🔄", label: "ArgoCD",     sub: "GitOps deploy",      color: "#f472b6", angle: -150, steps: [13, 14, 15] },
+];
+
+function topoCenter(angle: number) {
+  return {
+    x: TOPO_CX + TOPO_R * Math.cos((angle * Math.PI) / 180),
+    y: TOPO_CY + TOPO_R * Math.sin((angle * Math.PI) / 180),
+  };
+}
+
+function topoNodeState(node: TopoNode, steps: StepState[]): "pending" | "active" | "done" | "failed" {
+  if (steps.length === 0) return "pending";
+  const ns = steps.filter(s => node.steps.includes(s.step_index));
+  if (ns.length === 0) return "pending";
+  if (ns.some(s => s.status === "failed")) return "failed";
+  if (ns.some(s => s.status === "running")) return "active";
+  if (ns.every(s => s.status === "done")) return "done";
+  if (ns.some(s => s.status === "done")) return "active";
+  return "pending";
+}
+
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: project, isLoading, refetch: refetchProject } = useProject(id ?? "");
@@ -216,15 +253,7 @@ export function ProjectDetailPage() {
     detail:     s.detail ?? "",
   }));
 
-  const { steps, termLines, finished, reset: resetStream } = useProjectStream(id ?? "", initialSteps);
-
-  // Auto-scroll terminal to bottom
-  const termDivRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (termDivRef.current) {
-      termDivRef.current.scrollTop = termDivRef.current.scrollHeight;
-    }
-  }, [termLines]);
+  const { steps, finished, reset: resetStream } = useProjectStream(id ?? "", initialSteps);
 
   const allDone   = steps.length > 0 && steps.every((s) => s.status === "done");
   const anyFailed = steps.some((s) => s.status === "failed");
@@ -363,50 +392,192 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Two-column: steps + terminal */}
-      <div className="grid gap-5 mb-9" style={{ gridTemplateColumns: "1.1fr 1fr" }}>
+      {/* Two-column: steps + topology */}
+      <div className="grid gap-5 mb-9" style={{ gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1fr)" }}>
         {/* Steps list */}
         <div className="border border-[#334155] bg-[#1e293b] rounded-[10px] p-2">
           {steps.length === 0 ? (
             <div className="py-6 px-4 text-[13px] text-[#64748b]">Waiting for steps…</div>
           ) : (
             steps.map((step) => (
-              <div key={step.step_index} className="flex items-center gap-3 px-3 py-[9px] rounded-md">
+              <div key={step.step_index} className="flex items-start gap-3 px-3 py-[9px] rounded-md">
                 <StepIcon status={step.status} />
-                <span className="text-[11px] text-[#64748b] font-mono w-[18px] shrink-0">
+                <span className="text-[11px] text-[#64748b] font-mono w-[18px] shrink-0 mt-0.5">
                   {step.step_index}
                 </span>
-                <span
-                  className="text-[13px]"
-                  style={{ color: step.status === "pending" ? "#64748b" : "#f8fafc" }}
-                >
-                  {step.label}
-                </span>
+                <div className="flex flex-col min-w-0">
+                  <span
+                    className="text-[13px]"
+                    style={{ color: step.status === "pending" ? "#64748b" : "#f8fafc" }}
+                  >
+                    {step.label}
+                  </span>
+                  {step.detail && step.status === "failed" && (
+                    <span className="text-[11px] font-mono text-[#f87171] truncate mt-0.5">{step.detail}</span>
+                  )}
+                </div>
               </div>
             ))
           )}
         </div>
 
-        {/* Terminal log */}
-        <div
-          ref={termDivRef}
-          className="border border-[#334155] bg-[#0b1220] rounded-[10px] p-3.5 font-mono text-[12px] text-[#94a3b8] overflow-y-auto"
-          style={{ maxHeight: 420 }}
-        >
-          <div className="text-[#64748b] text-[11px] mb-2">
-            $ devportal provision --project {project.name}
+        {/* Service mesh topology */}
+        <div className="border border-[#1e3a5f] bg-[#060f1e] rounded-[10px] p-4 flex flex-col" style={{ minHeight: 380 }}>
+          {/* Status strip */}
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-mono tracking-widest text-[#334155] uppercase">Platform topology</span>
+            <span className="text-[11px] font-mono" style={{
+              color: allDone ? "#4ade80" : anyFailed ? "#f87171" : steps.some(s => s.status === "running") ? "#93c5fd" : "#475569",
+            }}>
+              {allDone
+                ? "✓ Complete"
+                : anyFailed
+                ? "✗ Failed"
+                : steps.some(s => s.status === "running")
+                ? "Provisioning…"
+                : "Pending"}
+            </span>
           </div>
-          {termLines.length === 0 && (
-            <div className="text-[#64748b]">Waiting for output…</div>
-          )}
-          {termLines.map((line, i) => (
-            <div key={i} style={{ color: line.color }} className="py-0.5">
-              {line.text}
-            </div>
-          ))}
-          {!finished && steps.some((s) => s.status === "running") && (
-            <div className="text-[#93c5fd] animate-pulse">▋</div>
-          )}
+
+          <svg viewBox="0 0 490 334" style={{ width: "100%", flex: 1 }} overflow="visible">
+            <defs>
+              <filter id="topo-hub-glow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="9" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+              {TOPO_NODES.map(n => (
+                <filter key={n.id} id={`tglow-${n.id}`} x="-70%" y="-70%" width="240%" height="240%">
+                  <feGaussianBlur stdDeviation="6" result="blur" />
+                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                </filter>
+              ))}
+            </defs>
+
+            {/* Connection lines hub → nodes */}
+            {TOPO_NODES.map(n => {
+              const { x, y } = topoCenter(n.angle);
+              const ns = topoNodeState(n, steps);
+              return (
+                <line key={n.id}
+                  x1={TOPO_CX} y1={TOPO_CY} x2={x} y2={y}
+                  stroke={ns === "failed" ? "#f87171" : (ns === "done" || ns === "active") ? n.color : "#0f2a47"}
+                  strokeWidth={ns === "pending" ? 1 : 1.5}
+                  strokeOpacity={ns === "pending" ? 0.35 : ns === "active" ? 0.75 : ns === "done" ? 0.45 : 0.35}
+                  strokeDasharray={ns === "pending" ? "3 5" : undefined}
+                />
+              );
+            })}
+
+            {/* Data packets — continuous loop while node is active */}
+            {TOPO_NODES.map(n => {
+              const ns = topoNodeState(n, steps);
+              if (ns !== "active") return null;
+              const { x: nx, y: ny } = topoCenter(n.angle);
+              return (
+                <circle key={`pkt-${n.id}`} r="4.5" fill={n.color} filter={`url(#tglow-${n.id})`}>
+                  <animateMotion dur="0.85s" path={`M ${TOPO_CX} ${TOPO_CY} L ${nx} ${ny}`} repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.06;0.88;1" dur="0.85s" repeatCount="indefinite" />
+                </circle>
+              );
+            })}
+
+            {/* Service nodes */}
+            {TOPO_NODES.map(n => {
+              const { x, y } = topoCenter(n.angle);
+              const ns = topoNodeState(n, steps);
+              const col = ns === "failed" ? "#f87171" : n.color;
+              return (
+                <g key={n.id}>
+                  {/* Pulsing outer ring while active */}
+                  {ns === "active" && (
+                    <circle cx={x} cy={y} r={26} fill="none" stroke={col} strokeWidth={1.5} strokeOpacity={0.4}>
+                      <animate attributeName="r" values="22;29;22" dur="2.4s" repeatCount="indefinite" />
+                      <animate attributeName="stroke-opacity" values="0.6;0.12;0.6" dur="2.4s" repeatCount="indefinite" />
+                    </circle>
+                  )}
+
+                  {/* Node circle */}
+                  <circle cx={x} cy={y} r={22}
+                    fill={ns === "pending" ? "#0a1628" : `${col}1e`}
+                    stroke={ns === "pending" ? "#1e3a5f" : col}
+                    strokeWidth={ns === "active" ? 2 : 1.5}
+                    filter={ns === "active" ? `url(#tglow-${n.id})` : undefined}
+                  />
+
+                  {/* Icon */}
+                  <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={14} style={{ userSelect: "none" }}>
+                    {n.icon}
+                  </text>
+
+                  {/* Done / failed badge */}
+                  {ns === "done" && (
+                    <>
+                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="#4ade80" strokeWidth={1.2} />
+                      <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="#4ade80" fontWeight="700">✓</text>
+                    </>
+                  )}
+                  {ns === "failed" && (
+                    <>
+                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="#f87171" strokeWidth={1.2} />
+                      <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="#f87171" fontWeight="700">✕</text>
+                    </>
+                  )}
+
+                  {/* Label */}
+                  <text x={x} y={y + 30} textAnchor="middle" fontSize={9.5}
+                    fill={ns === "pending" ? "#334155" : "#cbd5e1"}
+                    fontWeight={ns === "active" ? 600 : 400}
+                  >
+                    {n.label}
+                  </text>
+                  <text x={x} y={y + 42} textAnchor="middle" fontSize={8} fill="#1e3a5f">
+                    {n.sub}
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* Center hub */}
+            {(() => {
+              const doneCount = steps.filter(s => s.status === "done").length;
+              const total = steps.length || 15;
+              const pct = Math.round((doneCount / total) * 100);
+              const hubColor = allDone ? "#4ade80" : anyFailed ? "#f87171" : "#60a5fa";
+              const isRunning = steps.some(s => s.status === "running");
+              return (
+                <g filter={allDone || isRunning ? "url(#topo-hub-glow)" : undefined}>
+                  <circle cx={TOPO_CX} cy={TOPO_CY} r={37} fill="none" stroke={hubColor} strokeWidth={1} strokeOpacity={0.2} />
+                  <circle cx={TOPO_CX} cy={TOPO_CY} r={30}
+                    fill={allDone ? "rgba(74,222,128,0.09)" : anyFailed ? "rgba(248,113,113,0.09)" : "rgba(96,165,250,0.07)"}
+                    stroke={hubColor} strokeWidth={1.5}
+                  />
+                  {steps.length > 0 && (
+                    <>
+                      <text x={TOPO_CX} y={TOPO_CY - 5} textAnchor="middle" dominantBaseline="central"
+                        fontSize={14} fill={hubColor} fontWeight="700">
+                        {doneCount > 0 || allDone ? `${pct}%` : "⚙"}
+                      </text>
+                      <text x={TOPO_CX} y={TOPO_CY + 10} textAnchor="middle" fontSize={8.5} fill="#334155">
+                        {doneCount}/{total} steps
+                      </text>
+                    </>
+                  )}
+                  {steps.length === 0 && (
+                    <text x={TOPO_CX} y={TOPO_CY} textAnchor="middle" dominantBaseline="central" fontSize={12} fill="#334155">⚙</text>
+                  )}
+                </g>
+              );
+            })()}
+          </svg>
+
+          {/* Current / final step label */}
+          <div className="mt-2 text-[11px] font-mono text-center min-h-[18px] truncate px-2" style={{
+            color: anyFailed && finished ? "#f87171" : allDone ? "#4ade80" : "#64748b",
+          }}>
+            {steps.some(s => s.status === "running") && `… ${steps.find(s => s.status === "running")?.label}`}
+            {allDone && "All provisioning steps completed successfully"}
+            {anyFailed && finished && `Failed: ${steps.find(s => s.status === "failed")?.label}`}
+          </div>
         </div>
       </div>
 

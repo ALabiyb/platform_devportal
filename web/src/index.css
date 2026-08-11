@@ -52,6 +52,85 @@
   .font-mono { font-family: 'IBM Plex Mono', monospace; }
 }
 
+/* ── Landing page v2 animations ─────────────────────────────────────────── */
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50%       { background-position: 100% 50%; }
+}
+@keyframes floatA {
+  0%, 100% { transform: translateY(0px) rotate(-0.5deg); }
+  50%       { transform: translateY(-12px) rotate(0.5deg); }
+}
+@keyframes floatB {
+  0%, 100% { transform: translateY(0px) rotate(0.5deg); }
+  50%       { transform: translateY(-16px) rotate(-0.5deg); }
+}
+@keyframes floatC {
+  0%, 100% { transform: translateY(0px); }
+  33%       { transform: translateY(-8px) rotate(-0.5deg); }
+  66%       { transform: translateY(-4px) rotate(0.5deg); }
+}
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+@keyframes termLineIn {
+  from { opacity: 0; transform: translateY(6px); max-height: 0; }
+  to   { opacity: 1; transform: translateY(0); max-height: 40px; }
+}
+@keyframes statPop {
+  0%   { transform: scale(0.8); opacity: 0; }
+  60%  { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes orbitSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes connPulse {
+  0%, 100% { opacity: 0.25; stroke-dashoffset: 0; }
+  50%       { opacity: 0.7; }
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(96,165,250,0.4); }
+  50%       { box-shadow: 0 0 0 5px rgba(96,165,250,0); }
+}
+
+.landing-gradient-text {
+  background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 35%, #34d399 65%, #60a5fa 100%);
+  background-size: 250% 250%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: gradientShift 5s ease infinite;
+}
+.landing-feature-card {
+  transition: border-color 0.25s, box-shadow 0.25s, transform 0.2s;
+}
+.landing-feature-card:hover {
+  border-color: rgba(96, 165, 250, 0.4) !important;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.15), 0 8px 32px rgba(0,0,0,0.3);
+  transform: translateY(-2px);
+}
+.landing-stat-card {
+  transition: border-color 0.25s, background 0.25s;
+  animation: statPop 0.6s ease both;
+}
+.landing-stat-card:hover {
+  border-color: rgba(96, 165, 250, 0.35) !important;
+  background: rgba(96, 165, 250, 0.06) !important;
+}
+.landing-badge-float {
+  transition: box-shadow 0.3s;
+}
+.landing-badge-float:hover {
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.4), 0 8px 24px rgba(0,0,0,0.4) !important;
+}
+
 /* Landing page flow diagram animations */
 @keyframes flowTravel {
   0%   { left: 22px; opacity: 0; }
