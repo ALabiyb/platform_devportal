@@ -335,3 +335,91 @@ func (d *DB) ListServiceDependencies(ctx context.Context, fromProject uuid.UUID)
 	}
 	return out, rows.Err()
 }
+
+// ── Language Profiles ─────────────────────────────────────────────────────────
+
+func (d *DB) scanLanguageProfile(row interface {
+	Scan(...any) error
+}) (LanguageProfile, error) {
+	var p LanguageProfile
+	var rawEnv []byte
+	if err := row.Scan(&p.BuildTool, &p.DisplayName, &p.LivenessDelay, &p.ReadinessDelay, &rawEnv, &p.UpdatedAt, &p.UpdatedBy); err != nil {
+		return p, err
+	}
+	if err := json.Unmarshal(rawEnv, &p.ExtraEnv); err != nil || p.ExtraEnv == nil {
+		p.ExtraEnv = map[string]string{}
+	}
+	return p, nil
+}
+
+// GetLanguageProfile returns the profile for one build tool, or a safe default if not found.
+func (d *DB) GetLanguageProfile(ctx context.Context, buildTool string) (LanguageProfile, error) {
+	row := d.pool.QueryRow(ctx, `
+		SELECT build_tool, display_name, liveness_delay, readiness_delay, extra_env, updated_at, updated_by
+		FROM   language_profiles
+		WHERE  build_tool = $1`, buildTool)
+	p, err := d.scanLanguageProfile(row)
+	if err != nil {
+		return LanguageProfile{BuildTool: buildTool, DisplayName: buildTool, LivenessDelay: 30, ReadinessDelay: 10, ExtraEnv: map[string]string{}}, nil
+	}
+	return p, nil
+}
+
+// ListLanguageProfiles returns all language profiles ordered by build_tool.
+func (d *DB) ListLanguageProfiles(ctx context.Context) ([]LanguageProfile, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT build_tool, display_name, liveness_delay, readiness_delay, extra_env, updated_at, updated_by
+		FROM   language_profiles
+		ORDER  BY build_tool`)
+	if err != nil {
+		return nil, fmt.Errorf("language_profiles: list: %w", err)
+	}
+	defer rows.Close()
+	var out []LanguageProfile
+	for rows.Next() {
+		p, err := d.scanLanguageProfile(rows)
+		if err != nil {
+			return nil, fmt.Errorf("language_profiles: scan: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// UpsertLanguageProfile inserts or updates a language profile.
+func (d *DB) UpsertLanguageProfile(ctx context.Context, p LanguageProfile, updatedBy uuid.UUID) (LanguageProfile, error) {
+	raw, err := json.Marshal(p.ExtraEnv)
+	if err != nil {
+		return p, fmt.Errorf("language_profiles: marshal extra_env: %w", err)
+	}
+	row := d.pool.QueryRow(ctx, `
+		INSERT INTO language_profiles (build_tool, display_name, liveness_delay, readiness_delay, extra_env, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (build_tool) DO UPDATE
+		    SET display_name    = EXCLUDED.display_name,
+		        liveness_delay  = EXCLUDED.liveness_delay,
+		        readiness_delay = EXCLUDED.readiness_delay,
+		        extra_env       = EXCLUDED.extra_env,
+		        updated_at      = now(),
+		        updated_by      = EXCLUDED.updated_by
+		RETURNING build_tool, display_name, liveness_delay, readiness_delay, extra_env, updated_at, updated_by`,
+		p.BuildTool, p.DisplayName, p.LivenessDelay, p.ReadinessDelay, raw, updatedBy,
+	)
+	return d.scanLanguageProfile(row)
+}
+
+// SeedLanguageProfiles inserts default profiles without overwriting admin edits.
+func (d *DB) SeedLanguageProfiles(ctx context.Context, profiles []LanguageProfile) error {
+	for _, p := range profiles {
+		raw, _ := json.Marshal(p.ExtraEnv)
+		if _, err := d.pool.Exec(ctx, `
+			INSERT INTO language_profiles (build_tool, display_name, liveness_delay, readiness_delay, extra_env)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (build_tool) DO NOTHING`,
+			p.BuildTool, p.DisplayName, p.LivenessDelay, p.ReadinessDelay, raw,
+		); err != nil {
+			return fmt.Errorf("language_profiles: seed %s: %w", p.BuildTool, err)
+		}
+	}
+	return nil
+}

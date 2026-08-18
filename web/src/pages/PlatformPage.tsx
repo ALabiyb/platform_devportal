@@ -6,7 +6,8 @@ import {
   useClusterServices, useUpsertClusterService,
   useManifestTemplates, useUpsertManifestTemplate,
   useEnvironmentProfiles, useUpdateEnvironmentProfile,
-  type Cluster, type ManifestTemplate, type EnvironmentProfile,
+  useLanguageProfiles, useUpsertLanguageProfile,
+  type Cluster, type ManifestTemplate, type EnvironmentProfile, type LanguageProfile,
 } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
 
@@ -847,6 +848,175 @@ function ProfileCard({
   );
 }
 
+// ── Language Profiles Tab ─────────────────────────────────────────────────────
+
+function LanguageProfileCard({ profile, onSave }: { profile: LanguageProfile; onSave: (p: LanguageProfile) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<LanguageProfile>(profile);
+  const [envKey, setEnvKey] = useState("");
+  const [envVal, setEnvVal] = useState("");
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+
+  function startEdit() {
+    setDraft({ ...profile });
+    setEnvKey(""); setEnvVal(""); setErr(""); setOk("");
+    setEditing(true);
+  }
+
+  async function save() {
+    setErr(""); setOk("");
+    try {
+      await onSave(draft);
+      setOk("Saved."); setEditing(false);
+    } catch (e: any) {
+      setErr(e?.message ?? "Save failed.");
+    }
+  }
+
+  function addEnv() {
+    if (!envKey.trim()) return;
+    setDraft((d) => ({ ...d, extra_env: { ...d.extra_env, [envKey.trim()]: envVal } }));
+    setEnvKey(""); setEnvVal("");
+  }
+
+  function removeEnv(k: string) {
+    setDraft((d) => {
+      const next = { ...d.extra_env };
+      delete next[k];
+      return { ...d, extra_env: next };
+    });
+  }
+
+  const p = editing ? draft : profile;
+
+  return (
+    <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[13px] font-semibold text-[#f8fafc]">{profile.display_name}</span>
+        <span className="text-[11px] font-mono text-[#475569] bg-[#0f172a] px-2 py-0.5 rounded">{profile.build_tool}</span>
+      </div>
+
+      {/* Probe delays */}
+      <div className="grid grid-cols-2 gap-2 text-[12px]">
+        <div>
+          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Liveness delay</p>
+          {editing ? (
+            <input
+              type="number" value={draft.liveness_delay}
+              onChange={(e) => setDraft((d) => ({ ...d, liveness_delay: Number(e.target.value) }))}
+              className="w-full bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[12px] text-[#f8fafc] font-mono"
+            />
+          ) : (
+            <p className="text-[#cbd5e1] font-mono m-0">{p.liveness_delay}s</p>
+          )}
+        </div>
+        <div>
+          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Readiness delay</p>
+          {editing ? (
+            <input
+              type="number" value={draft.readiness_delay}
+              onChange={(e) => setDraft((d) => ({ ...d, readiness_delay: Number(e.target.value) }))}
+              className="w-full bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[12px] text-[#f8fafc] font-mono"
+            />
+          ) : (
+            <p className="text-[#cbd5e1] font-mono m-0">{p.readiness_delay}s</p>
+          )}
+        </div>
+      </div>
+
+      {/* Extra env vars */}
+      <div>
+        <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide mb-1 m-0">Injected env vars</p>
+        {Object.entries(p.extra_env ?? {}).length === 0 ? (
+          <p className="text-[11px] text-[#475569] m-0">—</p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {Object.entries(p.extra_env ?? {}).map(([k, v]) => (
+              <div key={k} className="flex items-center gap-1 font-mono text-[11px]">
+                <span className="text-[#93c5fd]">{k}</span>
+                <span className="text-[#475569]">=</span>
+                <span className="text-[#86efac] flex-1 truncate">{v}</span>
+                {editing && (
+                  <button onClick={() => removeEnv(k)}
+                    className="text-[#f87171] text-[10px] border-none bg-transparent cursor-pointer px-1">✕</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {editing && (
+          <div className="flex gap-1 mt-2">
+            <input placeholder="KEY" value={envKey} onChange={(e) => setEnvKey(e.target.value)}
+              className="flex-1 bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[11px] text-[#f8fafc] font-mono" />
+            <input placeholder="value" value={envVal} onChange={(e) => setEnvVal(e.target.value)}
+              className="flex-1 bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[11px] text-[#f8fafc] font-mono" />
+            <button onClick={addEnv}
+              className="px-2 py-1 bg-[#1e3a5f] border border-[#334155] rounded text-[#93c5fd] text-[11px] cursor-pointer">Add</button>
+          </div>
+        )}
+      </div>
+
+      <ErrorMsg msg={err} />
+      <SaveOk msg={ok} />
+
+      <div className="flex gap-2 mt-auto">
+        {editing ? (
+          <>
+            <button onClick={() => setEditing(false)}
+              className="flex-1 h-7 rounded border border-[#334155] bg-transparent text-[#94a3b8] text-[11px] cursor-pointer">Cancel</button>
+            <button onClick={save}
+              className="flex-1 h-7 rounded bg-primary border-none text-white text-[11px] cursor-pointer">Save</button>
+          </>
+        ) : (
+          <button onClick={startEdit}
+            className="w-full h-7 rounded bg-[#1e3a5f] border border-[#334155] text-[#93c5fd] text-[11px] cursor-pointer hover:bg-[#1e293b]">
+            Edit
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LanguageProfilesTab() {
+  const { data: profiles, isLoading } = useLanguageProfiles();
+
+  const upsertHooks: Record<string, ReturnType<typeof useUpsertLanguageProfile>> = {
+    maven: useUpsertLanguageProfile("maven"),
+    gradle: useUpsertLanguageProfile("gradle"),
+    go: useUpsertLanguageProfile("go"),
+    "nodejs-express": useUpsertLanguageProfile("nodejs-express"),
+    nextjs: useUpsertLanguageProfile("nextjs"),
+    "python-fastapi": useUpsertLanguageProfile("python-fastapi"),
+    dotnet: useUpsertLanguageProfile("dotnet"),
+    "flutter-web": useUpsertLanguageProfile("flutter-web"),
+    auto: useUpsertLanguageProfile("auto"),
+  };
+
+  async function handleSave(p: LanguageProfile) {
+    await upsertHooks[p.build_tool]?.mutateAsync(p);
+  }
+
+  return (
+    <div>
+      <SectionHeader
+        title="Language Profiles"
+        sub="Probe timing and injected env vars per build tool. Baked into base/deployment.yaml at provision time — edit here, applies to all future services."
+      />
+      {isLoading ? (
+        <p className="text-[13px] text-[#64748b]">Loading profiles…</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-4">
+          {(profiles ?? []).map((p) => (
+            <LanguageProfileCard key={p.build_tool} profile={p} onSave={handleSave} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EnvironmentProfilesTab() {
   const { data: profiles, isLoading } = useEnvironmentProfiles();
   const devUpdate = useUpdateEnvironmentProfile("dev");
@@ -882,12 +1052,13 @@ function EnvironmentProfilesTab() {
 
 // ── Root Page ─────────────────────────────────────────────────────────────────
 
-type Tab = "clusters" | "manifest-templates" | "environment-profiles";
+type Tab = "clusters" | "manifest-templates" | "environment-profiles" | "language-profiles";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "clusters",             label: "Cluster Registry",       icon: "🏗️" },
   { id: "manifest-templates",   label: "Manifest Templates",     icon: "📄" },
   { id: "environment-profiles", label: "Environment Profiles",   icon: "⚖️" },
+  { id: "language-profiles",    label: "Language Profiles",      icon: "🔧" },
 ];
 
 export function PlatformPage() {
@@ -925,6 +1096,7 @@ export function PlatformPage() {
       {tab === "clusters"             && <ClustersTab />}
       {tab === "manifest-templates"   && <ManifestTemplatesTab />}
       {tab === "environment-profiles" && <EnvironmentProfilesTab />}
+      {tab === "language-profiles"    && <LanguageProfilesTab />}
     </div>
   );
 }

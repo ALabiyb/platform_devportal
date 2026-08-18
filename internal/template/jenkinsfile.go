@@ -212,3 +212,64 @@ func SeedBuildTools() []string {
 		"nextjs", "python-fastapi", "dotnet", "flutter-web", "auto",
 	}
 }
+
+// LangProfileSeed holds the default values for one language profile.
+type LangProfileSeed struct {
+	BuildTool      string
+	DisplayName    string
+	LivenessDelay  int
+	ReadinessDelay int
+	ExtraEnv       map[string]string
+}
+
+// DefaultLanguageProfiles returns the platform-standard probe timing and env vars
+// per build tool. Platform team can override any of these via the admin UI.
+func DefaultLanguageProfiles() []LangProfileSeed {
+	return []LangProfileSeed{
+		{
+			BuildTool: "maven", DisplayName: "Java — Maven",
+			LivenessDelay: 60, ReadinessDelay: 30,
+			ExtraEnv: map[string]string{"JAVA_TOOL_OPTIONS": "-Xms256m -Xmx768m"},
+		},
+		{
+			BuildTool: "gradle", DisplayName: "Java — Gradle",
+			LivenessDelay: 60, ReadinessDelay: 30,
+			ExtraEnv: map[string]string{"JAVA_TOOL_OPTIONS": "-Xms256m -Xmx768m"},
+		},
+		{
+			BuildTool: "go", DisplayName: "Go",
+			LivenessDelay: 10, ReadinessDelay: 5,
+			ExtraEnv: map[string]string{},
+		},
+		{
+			BuildTool: "nodejs-express", DisplayName: "Node.js",
+			LivenessDelay: 20, ReadinessDelay: 10,
+			ExtraEnv: map[string]string{"NODE_ENV": "production"},
+		},
+		{
+			BuildTool: "nextjs", DisplayName: "Next.js",
+			LivenessDelay: 25, ReadinessDelay: 15,
+			ExtraEnv: map[string]string{"NODE_ENV": "production"},
+		},
+		{
+			BuildTool: "python-fastapi", DisplayName: "Python — FastAPI",
+			LivenessDelay: 20, ReadinessDelay: 10,
+			ExtraEnv: map[string]string{},
+		},
+		{
+			BuildTool: "dotnet", DisplayName: ".NET",
+			LivenessDelay: 30, ReadinessDelay: 15,
+			ExtraEnv: map[string]string{"ASPNETCORE_ENVIRONMENT": "Production"},
+		},
+		{
+			BuildTool: "flutter-web", DisplayName: "Flutter Web",
+			LivenessDelay: 10, ReadinessDelay: 5,
+			ExtraEnv: map[string]string{},
+		},
+		{
+			BuildTool: "auto", DisplayName: "Auto-detect",
+			LivenessDelay: 30, ReadinessDelay: 10,
+			ExtraEnv: map[string]string{},
+		},
+	}
+}

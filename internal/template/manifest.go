@@ -62,6 +62,24 @@ type PlatformRefs struct {
 	MinIONamespace           string
 }
 
+// ResourceSpec carries the environment-tier resource values read from the
+// environment_profiles DB table. Replaces the old hardcoded resourceProfile() function.
+type ResourceSpec struct {
+	Replicas int
+	CPUReq   string
+	MemReq   string
+	CPULim   string
+	MemLim   string
+}
+
+// LangProfile carries language-specific Deployment tuning read from the
+// language_profiles DB table — probe timing and extra env vars.
+type LangProfile struct {
+	LivenessDelay  int               // initialDelaySeconds for liveness probe
+	ReadinessDelay int               // initialDelaySeconds for readiness probe
+	ExtraEnv       map[string]string // e.g. {"JAVA_TOOL_OPTIONS": "-Xms256m -Xmx768m"}
+}
+
 // ManifestInput holds the per-environment values needed to render K8s manifests.
 type ManifestInput struct {
 	AppName     string // e.g. "payment-service"
@@ -71,6 +89,8 @@ type ManifestInput struct {
 	IngressHost string // e.g. "payment-service-dev.apps.example.com"
 	Port        int    // container port; 0 defaults to 8080
 	HealthPath  string // health check path; "" defaults to /healthz
+	Resources   ResourceSpec
+	Lang        LangProfile
 	InfraReqs   []InfraRequirement
 	Deps        []ServiceDep
 	Platform    PlatformRefs
@@ -93,7 +113,29 @@ func (g *Generator) KustomizeManifests(input ManifestInput) KustomizeFiles {
 		healthPath = "/healthz"
 	}
 
-	replicas, cpuReq, memReq, cpuLim, memLim := resourceProfile(input.Environment)
+	res := input.Resources
+	if res.Replicas == 0 {
+		res.Replicas = 1
+	}
+	if res.CPUReq == "" {
+		res.CPUReq = "100m"
+	}
+	if res.MemReq == "" {
+		res.MemReq = "128Mi"
+	}
+	if res.CPULim == "" {
+		res.CPULim = "500m"
+	}
+	if res.MemLim == "" {
+		res.MemLim = "512Mi"
+	}
+	lang := input.Lang
+	if lang.LivenessDelay == 0 {
+		lang.LivenessDelay = 30
+	}
+	if lang.ReadinessDelay == 0 {
+		lang.ReadinessDelay = 10
+	}
 	imageName, imageTag := splitImage(input.Image)
 
 	base    := input.AppName + "/base"
@@ -112,14 +154,14 @@ func (g *Generator) KustomizeManifests(input ManifestInput) KustomizeFiles {
 	files := KustomizeFiles{
 		// ── Base — env-agnostic, identical on every branch ──────────────────
 		base + "/kustomization.yaml": renderBaseKustomization(),
-		base + "/deployment.yaml":    renderBaseDeployment(input.AppName, port, healthPath),
+		base + "/deployment.yaml":    renderBaseDeployment(input.AppName, port, healthPath, lang),
 		base + "/service.yaml":       renderBaseService(input.AppName, port),
 
 		// ── Overlay — env-specific ───────────────────────────────────────────
 		overlay + "/kustomization.yaml":   renderOverlayKustomization(input, imageName, imageTag, overlayExtras),
 		overlay + "/namespace.yaml":       renderNamespace(input),
 		overlay + "/ingress.yaml":         renderIngress(input),
-		overlay + "/patch-resources.yaml": renderResourcePatch(input.AppName, replicas, cpuReq, memReq, cpuLim, memLim),
+		overlay + "/patch-resources.yaml": renderResourcePatch(input.AppName, res),
 	}
 
 	if input.Environment == "prod" {
@@ -140,18 +182,6 @@ func (g *Generator) KustomizeManifests(input ManifestInput) KustomizeFiles {
 	}
 
 	return files
-}
-
-// resourceProfile returns replica count and resource requests/limits per environment tier.
-func resourceProfile(env string) (replicas int, cpuReq, memReq, cpuLim, memLim string) {
-	switch env {
-	case "prod":
-		return 2, "200m", "256Mi", "1000m", "1Gi"
-	case "uat":
-		return 1, "100m", "128Mi", "500m", "512Mi"
-	default: // dev
-		return 1, "50m", "64Mi", "200m", "256Mi"
-	}
 }
 
 // splitImage splits "registry/project/name:tag" into (name, tag).
@@ -178,7 +208,14 @@ resources:
 `
 }
 
-func renderBaseDeployment(appName string, port int, healthPath string) string {
+func renderBaseDeployment(appName string, port int, healthPath string, lang LangProfile) string {
+	extraEnvBlock := ""
+	if len(lang.ExtraEnv) > 0 {
+		extraEnvBlock = "          env:\n"
+		for k, v := range lang.ExtraEnv {
+			extraEnvBlock += fmt.Sprintf("            - name: %s\n              value: %q\n", k, v)
+		}
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -202,9 +239,6 @@ spec:
           type: RuntimeDefault
       containers:
         - name: %[1]s
-          # Image resolved by each overlay via Kustomize images: directive.
-          # Jenkins updates the tag by running:
-          #   kustomize edit set image DEVPORTAL_IMAGE_PLACEHOLDER=<registry>/<service>:<build>
           image: DEVPORTAL_IMAGE_PLACEHOLDER
           imagePullPolicy: Always
           ports:
@@ -219,22 +253,22 @@ spec:
             httpGet:
               path: %[3]s
               port: http
-            initialDelaySeconds: 30
+            initialDelaySeconds: %[4]d
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: %[3]s
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: %[5]d
             periodSeconds: 5
-          envFrom:
+%[6]s          envFrom:
             - configMapRef:
                 name: %[1]s-config
                 optional: true
             - secretRef:
                 name: %[1]s-secret
                 optional: true
-`, appName, port, healthPath)
+`, appName, port, healthPath, lang.LivenessDelay, lang.ReadinessDelay, extraEnvBlock)
 }
 
 func renderBaseService(appName string, port int) string {
@@ -321,7 +355,7 @@ spec:
 `, i.AppName, i.Environment, i.IngressHost)
 }
 
-func renderResourcePatch(appName string, replicas int, cpuReq, memReq, cpuLim, memLim string) string {
+func renderResourcePatch(appName string, res ResourceSpec) string {
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -339,7 +373,7 @@ spec:
             limits:
               cpu: %s
               memory: %s
-`, appName, replicas, appName, cpuReq, memReq, cpuLim, memLim)
+`, appName, res.Replicas, appName, res.CPUReq, res.MemReq, res.CPULim, res.MemLim)
 }
 
 func renderHPA(appName, namespace string) string {

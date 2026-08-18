@@ -80,6 +80,9 @@ func main() {
 	if err := seedTemplates(seedCtx, database); err != nil {
 		slog.Warn("pipeline template seeding failed — templates may be missing", "err", err)
 	}
+	if err := seedLanguageProfiles(seedCtx, database); err != nil {
+		slog.Warn("language profile seeding failed — probe timing defaults may be missing", "err", err)
+	}
 
 	// Shared HTTP client used for all outbound calls (Keycloak, GitLab, Jenkins, etc.).
 	// TLS_SKIP_VERIFY=true allows self-signed certs in local dev — set false in prod.
@@ -239,6 +242,27 @@ func seedTemplates(ctx context.Context, database *db.DB) error {
 		return err
 	}
 	slog.Info("pipeline templates seeded", "count", len(seeds))
+	return nil
+}
+
+// seedLanguageProfiles inserts default probe timing and env var profiles per build tool.
+// Existing rows are left untouched so platform-team edits survive restarts.
+func seedLanguageProfiles(ctx context.Context, database *db.DB) error {
+	defaults := tmpl.DefaultLanguageProfiles()
+	seeds := make([]db.LanguageProfile, 0, len(defaults))
+	for _, d := range defaults {
+		seeds = append(seeds, db.LanguageProfile{
+			BuildTool:      d.BuildTool,
+			DisplayName:    d.DisplayName,
+			LivenessDelay:  d.LivenessDelay,
+			ReadinessDelay: d.ReadinessDelay,
+			ExtraEnv:       d.ExtraEnv,
+		})
+	}
+	if err := database.SeedLanguageProfiles(ctx, seeds); err != nil {
+		return err
+	}
+	slog.Info("language profiles seeded", "count", len(seeds))
 	return nil
 }
 

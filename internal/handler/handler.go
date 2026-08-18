@@ -204,6 +204,8 @@ func (h *Handler) Routes() http.Handler {
 				r.Put("/admin/manifest-templates/{name}", h.UpsertManifestTemplate)
 				r.Get("/admin/environment-profiles", h.ListEnvironmentProfiles)
 				r.Put("/admin/environment-profiles/{name}", h.UpdateEnvironmentProfile)
+				r.Get("/admin/language-profiles", h.ListLanguageProfiles)
+				r.Put("/admin/language-profiles/{build_tool}", h.UpsertLanguageProfile)
 			})
 		})
 	})

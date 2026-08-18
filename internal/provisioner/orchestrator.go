@@ -467,9 +467,28 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 
 		// Commit Kustomize base+overlays for all three environments.
 		// uat and prod branches are created from dev via StartBranch so ArgoCD can sync immediately.
+		// Load language profile once — same for all three envs
+		langDB, _ := o.database.GetLanguageProfile(ctx, p.BuildTool)
+		lang := tmpl.LangProfile{
+			LivenessDelay:  langDB.LivenessDelay,
+			ReadinessDelay: langDB.ReadinessDelay,
+			ExtraEnv:       langDB.ExtraEnv,
+		}
+
 		for _, env := range []string{"dev", "uat", "prod"} {
 			namespace := p.Slug + "-" + env
 			ingressHost := p.Slug + "-" + env + "." + o.cfg.IngressBaseDomain
+
+			// Load environment profile for resource quotas
+			envProfile, _ := o.database.GetEnvironmentProfile(ctx, env)
+			res := tmpl.ResourceSpec{
+				Replicas: envProfile.Replicas,
+				CPUReq:   envProfile.CPURequest,
+				MemReq:   envProfile.MemRequest,
+				CPULim:   envProfile.CPULimit,
+				MemLim:   envProfile.MemLimit,
+			}
+
 			kFiles := o.templates.KustomizeManifests(tmpl.ManifestInput{
 				AppName:     p.Slug,
 				Namespace:   namespace,
@@ -478,6 +497,8 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 				IngressHost: ingressHost,
 				Port:        p.Port,
 				HealthPath:  p.HealthPath,
+				Resources:   res,
+				Lang:        lang,
 				InfraReqs:   tmplInfraReqs,
 				Deps:        tmplDeps,
 				Platform:    platform,

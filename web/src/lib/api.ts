@@ -761,3 +761,31 @@ export function useUpdateEnvironmentProfile(name: string) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["environment-profiles"] }),
   });
 }
+
+// Language Profiles
+export interface LanguageProfile {
+  build_tool: string;
+  display_name: string;
+  liveness_delay: number;
+  readiness_delay: number;
+  extra_env: Record<string, string>;
+  updated_at: string;
+}
+
+export function useLanguageProfiles() {
+  return useQuery<LanguageProfile[]>({
+    queryKey: ["language-profiles"],
+    queryFn: () => apiFetch("/api/v1/admin/language-profiles"),
+  });
+}
+
+export function useUpsertLanguageProfile(buildTool: string) {
+  return useMutation({
+    mutationFn: (body: Partial<LanguageProfile>) =>
+      apiFetch<LanguageProfile>(`/api/v1/admin/language-profiles/${buildTool}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["language-profiles"] }),
+  });
+}

@@ -342,3 +342,52 @@ func (h *Handler) UpdateEnvironmentProfile(w http.ResponseWriter, r *http.Reques
 	}
 	jsonOK(w, p)
 }
+
+// ── Language Profiles ─────────────────────────────────────────────────────────
+
+func (h *Handler) ListLanguageProfiles(w http.ResponseWriter, r *http.Request) {
+	profiles, err := h.db.ListLanguageProfiles(r.Context())
+	if err != nil {
+		jsonError(w, "list language profiles: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if profiles == nil {
+		profiles = []db.LanguageProfile{}
+	}
+	jsonOK(w, profiles)
+}
+
+func (h *Handler) UpsertLanguageProfile(w http.ResponseWriter, r *http.Request) {
+	buildTool := chi.URLParam(r, "build_tool")
+	if buildTool == "" {
+		jsonError(w, "build_tool is required", http.StatusBadRequest)
+		return
+	}
+	user, _ := authpkg.UserFromContext(r.Context())
+
+	var req struct {
+		DisplayName    string            `json:"display_name"`
+		LivenessDelay  int               `json:"liveness_delay"`
+		ReadinessDelay int               `json:"readiness_delay"`
+		ExtraEnv       map[string]string `json:"extra_env"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ExtraEnv == nil {
+		req.ExtraEnv = map[string]string{}
+	}
+	p, err := h.db.UpsertLanguageProfile(r.Context(), db.LanguageProfile{
+		BuildTool:      buildTool,
+		DisplayName:    req.DisplayName,
+		LivenessDelay:  req.LivenessDelay,
+		ReadinessDelay: req.ReadinessDelay,
+		ExtraEnv:       req.ExtraEnv,
+	}, user.ID)
+	if err != nil {
+		jsonError(w, "upsert language profile: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, p)
+}

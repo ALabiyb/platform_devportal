@@ -292,6 +292,19 @@ type EnvironmentProfile struct {
 	UpdatedBy    *uuid.UUID `db:"updated_by"    json:"updated_by,omitempty"`
 }
 
+// LanguageProfile holds Kubernetes deployment tuning that varies by build tool
+// (probe timing, language-specific env vars). Resource quotas are stored separately
+// in environment_profiles and scale per environment tier.
+type LanguageProfile struct {
+	BuildTool      string            `db:"build_tool"      json:"build_tool"`
+	DisplayName    string            `db:"display_name"    json:"display_name"`
+	LivenessDelay  int               `db:"liveness_delay"  json:"liveness_delay"`
+	ReadinessDelay int               `db:"readiness_delay" json:"readiness_delay"`
+	ExtraEnv       map[string]string `db:"extra_env"       json:"extra_env"`
+	UpdatedAt      time.Time         `db:"updated_at"      json:"updated_at"`
+	UpdatedBy      *uuid.UUID        `db:"updated_by"      json:"updated_by,omitempty"`
+}
+
 // ServiceInfraRequirement records one infrastructure selection made by a
 // developer at service-registration time (e.g. order-service → postgres).
 // One row per service per infra type (UNIQUE project_id, service_type).
