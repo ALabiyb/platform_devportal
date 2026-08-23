@@ -183,10 +183,12 @@ type Config struct {
 	// All optional. Change these per customer without touching code or rebuilding
 	// the image — the same Docker image ships to every org; branding is config.
 	// Served as JSON at GET /branding.json (public, cached 5 min).
-	BrandAppName    string // Env: BRAND_APP_NAME    · Default: DevPortal
-	BrandCompany    string // Env: BRAND_COMPANY     · Default: (empty)
-	BrandPrimaryHue int    // Env: BRAND_PRIMARY_HUE · Default: 199 (sky blue, 0-360)
-	BrandLogoURL    string // Env: BRAND_LOGO_URL    · Default: (empty, shows text logo)
+	BrandAppName      string // Env: BRAND_APP_NAME        · Default: DevPortal
+	BrandCompany      string // Env: BRAND_COMPANY         · Default: (empty)
+	BrandPrimaryHue   int    // Env: BRAND_PRIMARY_HUE     · Default: 199 (sky blue, 0-360)
+	BrandSecondaryHue int    // Env: BRAND_SECONDARY_HUE   · Default: 262 (violet, 0-360)
+	BrandSurfaceHue   int    // Env: BRAND_SURFACE_HUE     · Default: 215 (cool gray-blue, 0-360) — tints panels/cards
+	BrandLogoURL      string // Env: BRAND_LOGO_URL        · Default: (empty, shows text logo)
 }
 
 // Load reads all configuration from environment variables and returns a
@@ -302,10 +304,12 @@ func Load() *Config {
 
 		TLSSkipVerify: env("TLS_SKIP_VERIFY", "true") != "false",
 
-		BrandAppName:    env("BRAND_APP_NAME", "DevPortal"),
-		BrandCompany:    env("BRAND_COMPANY", ""),
-		BrandPrimaryHue: envInt("BRAND_PRIMARY_HUE", 199),
-		BrandLogoURL:    env("BRAND_LOGO_URL", ""),
+		BrandAppName:      env("BRAND_APP_NAME", "DevPortal"),
+		BrandCompany:      env("BRAND_COMPANY", ""),
+		BrandPrimaryHue:   envInt("BRAND_PRIMARY_HUE", 199),
+		BrandSecondaryHue: envInt("BRAND_SECONDARY_HUE", 262),
+		BrandSurfaceHue:   envInt("BRAND_SURFACE_HUE", 215),
+		BrandLogoURL:      env("BRAND_LOGO_URL", ""),
 	}
 
 	slog.Info("config loaded",

@@ -535,13 +535,15 @@ DevPortal is a single Docker image. Every environment (homelab, staging, product
 
 6. **Keycloak client secrets** — regenerate each client secret in Keycloak and copy the new values into each tool's OIDC config AND into your `.env`.
 
-7. **Branding** — no rebuild needed. Change `BRAND_*` vars in `.env` and restart:
+7. **Branding** — no rebuild needed. All three hues drive the complete portal palette. Change `BRAND_*` vars in `.env` and restart:
    - `BRAND_APP_NAME` — portal title in nav and login page
    - `BRAND_COMPANY` — organisation name under the logo
-   - `BRAND_PRIMARY_HUE` — HSL hue (0–360): `199` sky blue · `142` green · `262` purple · `221` indigo · `38` amber
+   - `BRAND_PRIMARY_HUE` — main CTAs, buttons, links, focus ring (`199`=sky · `142`=green · `221`=indigo · `38`=amber)
+   - `BRAND_SECONDARY_HUE` — badges, tag chips, secondary highlights (`262`=violet · `300`=pink · `180`=teal)
+   - `BRAND_SURFACE_HUE` — panel/card/border tint (`215`=cool gray · `20`=warm gray · `222`=deep navy)
    - `BRAND_LOGO_URL` — URL to a hosted SVG or PNG logo
-   
-   React fetches `GET /branding.json` at boot and applies them instantly. The same Docker image can serve multiple customers or orgs with completely different branding.
+
+   React writes all three as CSS custom properties (`--brand-hue`, `--brand-secondary-hue`, `--brand-surface-hue`) before first render. Every colour token derives from these — the same image ships to every customer, branded via env vars only.
 
 8. **Database** — create the devportal DB on the target Postgres instance (same `CREATE DATABASE` command as §5), then set `DB_HOST`, `DB_USER`, `DB_PASSWORD` in `.env`.
 
@@ -608,10 +610,12 @@ All config comes from environment variables. Only `DB_PASSWORD` and `ENCRYPTION_
 | `TLS_SKIP_VERIFY` | no | `true` | Disable TLS cert verification for local tools |
 | `BRAND_APP_NAME` | no | `DevPortal` | Portal title in nav bar and login page |
 | `BRAND_COMPANY` | no | — | Organisation name shown under the logo |
-| `BRAND_PRIMARY_HUE` | no | `199` | HSL hue (0–360) for entire primary colour palette. No rebuild needed. |
+| `BRAND_PRIMARY_HUE` | no | `199` | HSL hue (0–360) — primary: CTAs, buttons, links, focus ring |
+| `BRAND_SECONDARY_HUE` | no | `262` | HSL hue (0–360) — secondary: badges, tag chips, secondary highlights |
+| `BRAND_SURFACE_HUE` | no | `215` | HSL hue (0–360) — panel/card/border tint (lower sat = more neutral) |
 | `BRAND_LOGO_URL` | no | — | URL to a hosted logo image (SVG or PNG) |
 
-> **Branding is fully runtime.** React fetches `GET /branding.json` at boot. Change any `BRAND_*` var, restart the container — new name, colour, and logo are applied instantly with no image rebuild. Deploy the same Docker image to multiple customers and brand each one via env vars only.
+> **Branding is fully runtime — all three hues drive the complete palette.** React fetches `GET /branding.json` at boot and writes `--brand-hue`, `--brand-secondary-hue`, `--brand-surface-hue` as CSS custom properties before the first render. Every colour token in the portal derives from these three. Change any `BRAND_*` var, restart — new palette applied instantly, no image rebuild.
 
 ---
 
