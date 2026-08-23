@@ -1,0 +1,177 @@
+# ---------------------------------------------------------------------------
+# DevPortal Helm Values
+# Author: Labiyb M. Said — DevSecOps Engineer
+# Contact: saidlabiybm@gmail.com
+# ---------------------------------------------------------------------------
+#
+# Two built-in profiles (override with --values):
+#   personal.yaml — single-node, no HPA, minimal resources (laptop / homelab)
+#   production.yaml — HA, HPA, resource limits, PodDisruptionBudget
+#
+# Example:
+#   helm install devportal ./chart -f chart/profiles/personal.yaml
+
+# ── Image ────────────────────────────────────────────────────────────────────
+image:
+  repository: harbor.docker.localhost/nexbridge/devportal
+  tag: ""          # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# ── Replica + scaling ────────────────────────────────────────────────────────
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# ── Service ──────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 8080
+
+# ── Ingress ──────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: ""            # set to "traefik" when using Traefik IngressClass
+  host: devportal.example.com
+  tls: false
+  # For Traefik CRD-based routing (recommended):
+  traefik:
+    enabled: false
+    entrypoint: websecure
+    certResolver: ""       # e.g. "letsencrypt"
+
+# ── Resources ────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ── ServiceAccount ───────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ── Pod settings ─────────────────────────────────────────────────────────────
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ── DevPortal config (maps to .env) ─────────────────────────────────────────
+config:
+  httpAddr: ":8080"
+
+  # Auth — "local" for built-in accounts, "oidc" for Keycloak SSO
+  authMode: "local"
+
+  # Organisation
+  orgName: "NexBridge Technologies"
+  orgSlug: "nexbridge"
+
+  # Branding
+  brandAppName: "DevPortal"
+  brandCompany: "NexBridge Technologies"
+  brandPrimaryHue: 199
+
+  # Worker
+  workerConcurrency: 3
+
+  # TLS — set false when all tools use valid certs
+  tlsSkipVerify: true
+
+  # Git provider — "gitea" or "gitlab"
+  gitProvider: "gitea"
+  giteaURL: "https://git.docker.localhost"
+  botName: "DevPortal Bot"
+  botEmail: "devportal@nexbridge.local"
+
+  # Jenkins
+  jenkinsURL: "https://jenkins.docker.localhost"
+  jenkinsPublicURL: "https://jenkins.docker.localhost"
+  jenkinsUser: "admin"
+
+  # Harbor
+  harborURL: "https://harbor.docker.localhost"
+  harborUser: "admin"
+
+  # DefectDojo
+  defectDojoURL: "https://defectdojo.docker.localhost"
+
+  # ArgoCD — leave empty when no k8s cluster available
+  argoCDURL: ""
+  argoCDInsecure: false
+
+  # Dependency-Track
+  dependencyTrackURL: "https://dtrack.docker.localhost"
+  dependencyTrackAPIKeyID: "dependency-track-api-key"
+
+  # Vault — leave empty when no Vault available
+  vaultURL: ""
+  vaultKVMount: "secret"
+  vaultK8sAuthMount: "kubernetes"
+  vaultUseVSO: false
+
+  # Manifest / Jenkinsfile generation
+  registryURL: "harbor.docker.localhost"
+  registryCredentialsID: "robot-jenkins"
+  gitCredentialsID: "gitea-token"
+  sharedLibraryURL: "https://git.docker.localhost/nexbridge/jenkins-shared-library.git"
+  k8sManifestGroup: "kubernetes-manifest"
+  ingressBaseDomain: "docker.localhost"
+
+  # OIDC (when authMode=oidc)
+  oidcIssuerURL: "https://keycloak.docker.localhost/realms/nexbridge"
+  oidcClientID: "devportal"
+  oidcRedirectURL: "https://devportal.localhost/auth/callback"
+  oidcAdminGroup: "devportal-admins"
+  oidcDeveloperGroup: "devportal-developers"
+
+# ── Secrets (create externally, reference by name) ───────────────────────────
+# All sensitive values come from a K8s Secret referenced below.
+# Create it before installing:
+#
+#   kubectl create secret generic devportal-secrets \
+#     --from-literal=DB_PASSWORD=xxx \
+#     --from-literal=ENCRYPTION_KEY=xxx \
+#     --from-literal=GITEA_TOKEN=xxx \
+#     --from-literal=JENKINS_TOKEN=xxx \
+#     --from-literal=HARBOR_TOKEN=xxx \
+#     --from-literal=DEFECTDOJO_TOKEN=xxx \
+#     --from-literal=OIDC_CLIENT_SECRET=xxx \
+#     --from-literal=DEPENDENCY_TRACK_API_KEY=xxx
+#
+existingSecret: "devportal-secrets"
+
+# ── Database ─────────────────────────────────────────────────────────────────
+database:
+  host: "postgres"
+  port: "5432"
+  name: "devportal"
+  user: "devportal"
+  sslMode: "disable"
+
+# ── App DB (provisioned FOR developer apps) ───────────────────────────────────
+appDatabase:
+  host: "postgres"
+  port: "5432"
+  adminUser: "postgres"

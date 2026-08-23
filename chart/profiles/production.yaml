@@ -1,0 +1,22 @@
+# Production profile — HA, HPA, strict resources, valid TLS
+replicaCount: 2
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+config:
+  workerConcurrency: 5
+  tlsSkipVerify: false
+ingress:
+  traefik:
+    enabled: true
+    entrypoint: websecure
+    certResolver: letsencrypt

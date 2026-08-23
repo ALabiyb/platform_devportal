@@ -1,0 +1,15 @@
+apiVersion: v2
+name: devportal
+description: NexBridge DevPortal — Internal Developer Platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - idp
+  - devportal
+  - platform-engineering
+  - devsecops
+home: https://git.docker.localhost/nexbridge/devportal
+maintainers:
+  - name: Labiyb M. Said
+    email: saidlabiybm@gmail.com

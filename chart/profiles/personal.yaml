@@ -1,0 +1,14 @@
+# Personal / homelab profile — single replica, minimal resources, no HPA
+replicaCount: 1
+autoscaling:
+  enabled: false
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+config:
+  workerConcurrency: 2
+  tlsSkipVerify: true

@@ -1,0 +1,215 @@
+{
+  "realm": "nexbridge",
+  "enabled": true,
+  "displayName": "NexBridge Platform",
+  "displayNameHtml": "<b>NexBridge</b> Platform",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": true,
+  "rememberMe": true,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+
+  "groups": [
+    { "name": "devportal-admins",     "path": "/devportal-admins" },
+    { "name": "devportal-developers", "path": "/devportal-developers" }
+  ],
+
+  "clientScopes": [
+    {
+      "name": "groups",
+      "description": "User group membership",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "devportal",
+      "name": "DevPortal",
+      "description": "NexBridge Internal Developer Platform",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "devportal-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "redirectUris": [
+        "https://devportal.localhost/auth/callback"
+      ],
+      "webOrigins": [
+        "https://devportal.localhost"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email", "groups"],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": {
+            "user.attribute": "email",
+            "claim.name": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-full-name-mapper",
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "gitea",
+      "name": "Gitea",
+      "description": "Gitea self-hosted Git",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "gitea-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "redirectUris": [
+        "https://git.docker.localhost/user/oauth2/keycloak/callback"
+      ],
+      "webOrigins": [
+        "https://git.docker.localhost"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email"],
+      "optionalClientScopes": ["groups"]
+    },
+    {
+      "clientId": "jenkins",
+      "name": "Jenkins",
+      "description": "Jenkins CI/CD",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "jenkins-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "redirectUris": [
+        "https://jenkins.docker.localhost/securityRealm/finishLogin"
+      ],
+      "webOrigins": [
+        "https://jenkins.docker.localhost"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email"],
+      "optionalClientScopes": ["groups"]
+    },
+    {
+      "clientId": "harbor",
+      "name": "Harbor",
+      "description": "Harbor container registry",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "harbor-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "redirectUris": [
+        "https://harbor.docker.localhost/c/oidc/callback"
+      ],
+      "webOrigins": [
+        "https://harbor.docker.localhost"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "defectdojo",
+      "name": "DefectDojo",
+      "description": "DefectDojo vulnerability management",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "defectdojo-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "redirectUris": [
+        "https://defectdojo.docker.localhost/complete/oidc/"
+      ],
+      "webOrigins": [
+        "https://defectdojo.docker.localhost"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "sonarqube",
+      "name": "SonarQube",
+      "description": "SonarQube static analysis",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "sonarqube-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "redirectUris": [
+        "https://sonarqube.docker.localhost/oauth2/callback/oidc"
+      ],
+      "webOrigins": [
+        "https://sonarqube.docker.localhost"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "dependency-track",
+      "name": "Dependency-Track",
+      "description": "Dependency-Track SCA",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dtrack-secret-change-me",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "redirectUris": [
+        "https://dtrack.docker.localhost/"
+      ],
+      "webOrigins": [
+        "https://dtrack.docker.localhost"
+      ],
+      "defaultClientScopes": ["openid", "profile", "email"],
+      "optionalClientScopes": []
+    }
+  ]
+}

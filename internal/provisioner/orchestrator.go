@@ -606,6 +606,14 @@ func (o *Orchestrator) Provision(ctx context.Context, input ProvisionInput) erro
 
 		apiServer := envClusters[envName].apiServer
 		if err := o.step(ctx, projectID, idx, func() error {
+			// Skip gracefully when no k8s cluster / ArgoCD is configured.
+			// Manifests are still committed to git; wire ArgoCD when a cluster is available.
+			if o.cfg.ArgoCDURL == "" {
+				slog.Info("provisioner: ArgoCD not configured — skipping GitOps step",
+					"project", p.Name, "env", envName)
+				return nil
+			}
+
 			// ArgoCD Application — service overlay (Deployment, Service, Ingress, NetworkPolicy)
 			if e := o.gitops.CreateApplication(ctx, plugin.CreateAppInput{
 				Name:           appName,

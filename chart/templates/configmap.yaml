@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "devportal.fullname" . }}-config
+  labels:
+    {{- include "devportal.labels" . | nindent 4 }}
+data:
+  HTTP_ADDR:                   {{ .Values.config.httpAddr | quote }}
+  AUTH_MODE:                   {{ .Values.config.authMode | quote }}
+  ORG_NAME:                    {{ .Values.config.orgName | quote }}
+  ORG_SLUG:                    {{ .Values.config.orgSlug | quote }}
+  BRAND_APP_NAME:              {{ .Values.config.brandAppName | quote }}
+  BRAND_COMPANY:               {{ .Values.config.brandCompany | quote }}
+  BRAND_PRIMARY_HUE:           {{ .Values.config.brandPrimaryHue | toString | quote }}
+  WORKER_CONCURRENCY:          {{ .Values.config.workerConcurrency | toString | quote }}
+  TLS_SKIP_VERIFY:             {{ .Values.config.tlsSkipVerify | toString | quote }}
+  GIT_PROVIDER:                {{ .Values.config.gitProvider | quote }}
+  GITEA_URL:                   {{ .Values.config.giteaURL | quote }}
+  BOT_NAME:                    {{ .Values.config.botName | quote }}
+  BOT_EMAIL:                   {{ .Values.config.botEmail | quote }}
+  JENKINS_URL:                 {{ .Values.config.jenkinsURL | quote }}
+  JENKINS_PUBLIC_URL:          {{ .Values.config.jenkinsPublicURL | quote }}
+  JENKINS_USER:                {{ .Values.config.jenkinsUser | quote }}
+  HARBOR_URL:                  {{ .Values.config.harborURL | quote }}
+  HARBOR_USER:                 {{ .Values.config.harborUser | quote }}
+  DEFECTDOJO_URL:              {{ .Values.config.defectDojoURL | quote }}
+  ARGOCD_URL:                  {{ .Values.config.argoCDURL | quote }}
+  ARGOCD_INSECURE:             {{ .Values.config.argoCDInsecure | toString | quote }}
+  DEPENDENCY_TRACK_URL:        {{ .Values.config.dependencyTrackURL | quote }}
+  DEPENDENCY_TRACK_API_KEY_ID: {{ .Values.config.dependencyTrackAPIKeyID | quote }}
+  VAULT_URL:                   {{ .Values.config.vaultURL | quote }}
+  VAULT_KV_MOUNT:              {{ .Values.config.vaultKVMount | quote }}
+  VAULT_K8S_AUTH_MOUNT:        {{ .Values.config.vaultK8sAuthMount | quote }}
+  VAULT_USE_VSO:               {{ .Values.config.vaultUseVSO | toString | quote }}
+  REGISTRY_URL:                {{ .Values.config.registryURL | quote }}
+  REGISTRY_CREDENTIALS_ID:     {{ .Values.config.registryCredentialsID | quote }}
+  GIT_CREDENTIALS_ID:          {{ .Values.config.gitCredentialsID | quote }}
+  SHARED_LIBRARY_URL:          {{ .Values.config.sharedLibraryURL | quote }}
+  K8S_MANIFEST_GROUP:          {{ .Values.config.k8sManifestGroup | quote }}
+  INGRESS_BASE_DOMAIN:         {{ .Values.config.ingressBaseDomain | quote }}
+  OIDC_ISSUER_URL:             {{ .Values.config.oidcIssuerURL | quote }}
+  OIDC_CLIENT_ID:              {{ .Values.config.oidcClientID | quote }}
+  OIDC_REDIRECT_URL:           {{ .Values.config.oidcRedirectURL | quote }}
+  OIDC_ADMIN_GROUP:            {{ .Values.config.oidcAdminGroup | quote }}
+  OIDC_DEVELOPER_GROUP:        {{ .Values.config.oidcDeveloperGroup | quote }}
+  DB_HOST:                     {{ .Values.database.host | quote }}
+  DB_PORT:                     {{ .Values.database.port | quote }}
+  DB_NAME:                     {{ .Values.database.name | quote }}
+  DB_USER:                     {{ .Values.database.user | quote }}
+  DB_SSL_MODE:                 {{ .Values.database.sslMode | quote }}
+  APP_DB_HOST:                 {{ .Values.appDatabase.host | quote }}
+  APP_DB_PORT:                 {{ .Values.appDatabase.port | quote }}
+  APP_DB_ADMIN_USER:           {{ .Values.appDatabase.adminUser | quote }}

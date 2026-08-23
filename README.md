@@ -1,156 +1,245 @@
 # DevPortal — NexBridge Technologies
 
-An Internal Developer Platform (IDP) that provisions the full DevSecOps toolchain for a new service in one form submission — Gitea repository, Jenkinsfile, Harbor image project, DefectDojo engagement, ArgoCD application, and Kubernetes manifests — all wired together automatically, with a live step-by-step progress stream in the browser.
+Internal Developer Platform (IDP). A developer fills one 7-step form and gets a fully provisioned, production-ready service in ~90 seconds — Git repo, CI/CD pipeline, container registry project, security scanning product, Kubernetes manifests, GitOps applications, Vault secrets path, and Dependency-Track CVE alerts — all wired together, zero manual steps.
 
-**Maintained by:** Labiyb M. Said — DevSecOps Engineer · saidlabiybm@gmail.com
+**Author:** Labiyb M. Said — DevSecOps Engineer · saidlabiybm@gmail.com  
+**Company:** NexBridge Technologies
+
+> Full IDP vision, manifest repo structure, GitOps flow, and roadmap → [`ARCHITECTURE.md`](ARCHITECTURE.md)  
+> Build goals and phase tracker → [`GOALS.md`](GOALS.md)
 
 ---
-
-> **Full platform architecture, IDP vision, manifest repo structure, service dependency model, GitOps flow, and roadmap → [`ARCHITECTURE.md`](ARCHITECTURE.md)**
 
 ## Table of Contents
 
-1. [Architecture Overview](#architecture-overview)
-2. [What DevPortal Manages](#what-devportal-manages)
-3. [Quick Start — New Machine](#quick-start--new-machine)
-4. [First Login](#first-login)
-5. [Two Compose Files](#two-compose-files)
-6. [Migrations — Automatic at Startup](#migrations--automatic-at-startup)
-7. [Adding a New Migration](#adding-a-new-migration)
-8. [Environment Variables](#environment-variables)
-9. [Platform Engineering Admin](#platform-engineering-admin)
-10. [Worker Process](#worker-process)
-11. [Jenkins Setup](#jenkins-setup)
-12. [Image Signing (Cosign)](#image-signing-cosign)
-13. [Local Development (No Docker)](#local-development-no-docker)
-14. [Deploying to Production](#deploying-to-production)
-15. [make help — All Targets](#make-help--all-targets)
+1. [What DevPortal Provisions](#1-what-devportal-provisions)
+2. [Local Lab Stack](#2-local-lab-stack)
+3. [Keycloak Realm Setup](#3-keycloak-realm-setup)
+4. [Configure Each Tool for SSO](#4-configure-each-tool-for-sso)
+5. [DevPortal Configuration](#5-devportal-configuration)
+6. [Running DevPortal Locally](#6-running-devportal-locally)
+7. [First Login and Initial Setup](#7-first-login-and-initial-setup)
+8. [Testing End-to-End](#8-testing-end-to-end)
+9. [Database Migrations](#9-database-migrations)
+10. [Jenkins Credentials Setup](#10-jenkins-credentials-setup)
+11. [Image Signing (Cosign)](#11-image-signing-cosign)
+12. [Deploying to Kubernetes (Helm — P5)](#12-deploying-to-kubernetes-helm)
+13. [Environment Variables Reference](#13-environment-variables-reference)
+14. [make help](#14-make-help)
 
 ---
 
-## Architecture Overview
+## 1. What DevPortal Provisions
 
-```
-Developer fills form in DevPortal UI
-          │
-          ▼
-  DevPortal (Go API + React SPA)
-          │
-          │  INSERT provisioning_job
-          ▼
-  Postgres Job Queue ──── SELECT FOR UPDATE SKIP LOCKED
-          │
-          ▼
-  Worker Pool (embedded in API process, or standalone cmd/worker pod)
-          │
-          │ 15-step orchestrator
-    ┌─────┼──────────────────┬──────────┬────────────┐
-    ▼     ▼                  ▼          ▼            ▼
-  Gitea  Jenkins          Harbor    DefectDojo    ArgoCD
-  repo   multibranch      image     product +     GitOps
-  +bot   job + webhook    project   engagement    application
-  commits
-          │
-          ▼
-  K8s cluster (via ArgoCD)
-```
+One form → 17 automated steps:
 
-### Platform Engineering Layer
+| Step | What happens |
+|------|-------------|
+| 1 | DefectDojo product created with SLA deadlines (Critical / High / Medium / Low days) |
+| 2 | DefectDojo CI/CD engagement created — Jenkins will import SBOM scans here |
+| 3 | Gitea repository created (private, team namespace) |
+| 4 | Jenkinsfile + Dockerfile + VERSION committed in one atomic commit; dev / uat / prod branches created |
+| 5 | `main` branch protected — no force-push |
+| 6 | Jenkins team folder created |
+| 7 | Jenkins multibranch pipeline job created; Jenkins scans immediately |
+| 8 | Pipeline URL saved |
+| 9 | Harbor image project created (Trivy auto-scan on push enabled) |
+| 10 | Harbor robot account created for Jenkins push/pull |
+| 11 | Gitea webhook registered → Jenkins; all future pushes trigger CI |
+| 12 | Manifest repo `<app>-k8s` gets Kustomize base + dev / uat / prod overlays; NetworkPolicy egress rules auto-generated from declared service dependencies and infra |
+| 13–15 | ArgoCD Applications created per environment — skipped gracefully when no cluster configured |
+| 16 | Vault KV path + ACL policy + K8s auth role created — skipped when `VAULT_URL` not set |
+| 17 | Dependency-Track project created; email notification rule set up — all application members receive CVE alerts via Mailpit (local) or real SMTP (prod) |
 
-Admins configure shared infrastructure once; all services inherit it automatically at provision time:
+**Infra selections** (PostgreSQL / Kafka / Redis / RabbitMQ / MinIO) produce committed operator CRs in a separate `-platform` ArgoCD Application — CNPG Database, Strimzi KafkaTopic, RabbitMQ Vhost+User, MinIO bucket init Job, Redis ACL init Job.
 
-```
-clusters  ──── cluster_platform_services  (CNPG / Kafka / MinIO / Redis / RabbitMQ / Vault / Gateway)
-     │
-     └──── environment_profiles           (CPU / mem / replicas / HPA per dev|uat|prod tier)
-
-manifest_templates                        (15 editable K8s YAML templates)
-service_infra_requirements                (per-service infra selections)
-```
+**Member sync** — when a lead adds or removes a team member in the DevPortal UI, the change propagates in the background to Gitea (group), DefectDojo (product member), Harbor (project member), and Dependency-Track (CVE notification emails). Keycloak is the single IdP — users need only one login.
 
 ---
 
-## What DevPortal Manages
+## 2. Local Lab Stack
 
-| Entity | Description |
-|:-------|:------------|
-| **Teams** | Groups of developers. Each application belongs to one team |
-| **Applications** | A logical product (e.g. "Payment Platform") containing one or more services |
-| **Services** | A single deployable unit — one Git repo, one Docker image, one Jenkinsfile, ArgoCD application per environment |
-| **Credentials** | Encrypted (AES-256-GCM) secrets stored in DevPortal's DB, used by the provisioner |
-| **Clusters** | Kubernetes cluster registry — one row per environment (dev / uat / prod) |
-| **Manifest Templates** | 15 K8s YAML templates (Namespace → HPA) editable at runtime via Admin UI |
-| **Environment Profiles** | CPU / memory / replica / HPA limits per tier, inherited by every service |
-| **Provisioning Jobs** | Async job queue. HTTP API returns immediately; worker provisions in background |
+All services run behind **Traefik v3.6** on `*.docker.localhost`.
+
+| Service | URL | Role |
+|---------|-----|------|
+| **DevPortal** | https://devportal.localhost | This platform |
+| **Keycloak** | https://keycloak.docker.localhost | IdP — SSO for all tools |
+| **Gitea** | https://git.docker.localhost | Source control |
+| **Jenkins** | https://jenkins.docker.localhost | CI/CD |
+| **Harbor** | https://harbor.docker.localhost | Container registry |
+| **DefectDojo** | https://defectdojo.docker.localhost | Vulnerability management |
+| **Dependency-Track** | https://dtrack.docker.localhost | SCA + CVE tracking |
+| **SonarQube** | https://sonarqube.docker.localhost | Static analysis |
+| **Mailpit** | https://mail.docker.localhost | SMTP catcher — all email lands here |
+| **Traefik** | https://traefik.docker.localhost | Edge router |
+| **pgAdmin** | https://pgadmin.docker.localhost | DB management |
+
+> **No k8s cluster?** Steps 13–15 (ArgoCD) and 16 (Vault) are skipped gracefully. Steps 1–12 and 17 all run and produce real output.
 
 ---
 
-## Quick Start — New Machine
+## 3. Keycloak Realm Setup
 
-Requires: Docker Desktop (or Docker Engine + Compose plugin). Nothing else.
+A ready-to-import realm export is at `keycloak/realm-export.json`. It creates:
+- Realm `nexbridge`
+- OIDC clients for every tool with correct redirect URIs
+- Groups: `devportal-admins`, `devportal-developers`
+- Groups claim mapper (groups appear in access tokens)
+
+### Import
+
+1. Go to **https://keycloak.docker.localhost/admin**
+2. Top-left dropdown → **Create realm**
+3. Click **Browse** → select `keycloak/realm-export.json` → **Create**
+
+The realm `nexbridge` appears immediately with all clients pre-configured.
+
+### Change client secrets
+
+The export contains placeholder secrets (e.g. `devportal-secret-change-me`). Change each one:
+
+**Keycloak admin → nexbridge realm → Clients → `<client>` → Credentials → Regenerate**
+
+Update the corresponding value in your `.env.local` and in each tool's OIDC configuration.
+
+### Create users
+
+**Keycloak admin → nexbridge → Users → Add user**
+
+For DevPortal admin access: after creating the user, go to **Groups** tab → join `devportal-admins`.
+
+---
+
+## 4. Configure Each Tool for SSO
+
+Replace `<secret>` with the actual client secret from Keycloak.  
+Issuer URL for all tools: `https://keycloak.docker.localhost/realms/nexbridge`
+
+### Gitea
+
+**Site Administration → Authentication Sources → Add Authentication Source**
+
+| Field | Value |
+|-------|-------|
+| Authentication Type | OAuth2 |
+| Authentication Name | `keycloak` |
+| OAuth2 Provider | OpenID Connect |
+| Client ID | `gitea` |
+| Client Secret | `<gitea secret>` |
+| OpenID Connect Auto Discovery URL | `https://keycloak.docker.localhost/realms/nexbridge/.well-known/openid-configuration` |
+
+### Jenkins
+
+Install plugin: **OpenID Connect Authentication** (`oic-auth`)
+
+**Manage Jenkins → Security → Security Realm → Login with OpenID Connect**
+
+| Field | Value |
+|-------|-------|
+| Client id | `jenkins` |
+| Client secret | `<jenkins secret>` |
+| Well Known Configuration URL | `https://keycloak.docker.localhost/realms/nexbridge/.well-known/openid-configuration` |
+| User name field | `preferred_username` |
+
+### Harbor
+
+**Administration → Configuration → Authentication**
+
+| Field | Value |
+|-------|-------|
+| Auth Mode | OIDC |
+| OIDC Provider Name | Keycloak |
+| OIDC Endpoint | `https://keycloak.docker.localhost/realms/nexbridge` |
+| OIDC Client ID | `harbor` |
+| OIDC Client Secret | `<harbor secret>` |
+| OIDC Scope | `openid,profile,email` |
+| Verify Certificate | unchecked (self-signed) |
+| Automatic onboarding | checked |
+| Username Claim | `preferred_username` |
+
+### DefectDojo
+
+**System Settings → Social Authentication**
+
+| Field | Value |
+|-------|-------|
+| Enable OIDC | ✓ |
+| OIDC_OP_JWKS_ENDPOINT | `https://keycloak.docker.localhost/realms/nexbridge/protocol/openid-connect/certs` |
+| OIDC_OP_AUTHORIZATION_ENDPOINT | `https://keycloak.docker.localhost/realms/nexbridge/protocol/openid-connect/auth` |
+| OIDC_OP_TOKEN_ENDPOINT | `https://keycloak.docker.localhost/realms/nexbridge/protocol/openid-connect/token` |
+| OIDC_OP_USER_ENDPOINT | `https://keycloak.docker.localhost/realms/nexbridge/protocol/openid-connect/userinfo` |
+| OIDC_RP_CLIENT_ID | `defectdojo` |
+| OIDC_RP_CLIENT_SECRET | `<defectdojo secret>` |
+
+Also add to DefectDojo `.env`:
+```
+DD_SOCIAL_AUTH_OIDC_OIDC_ENDPOINT=https://keycloak.docker.localhost/realms/nexbridge
+```
+
+### SonarQube
+
+**Administration → Configuration → General Settings → Authentication → OpenID Connect**
+
+| Field | Value |
+|-------|-------|
+| Enabled | true |
+| Client ID | `sonarqube` |
+| Client Secret | `<sonarqube secret>` |
+| Issuer URI | `https://keycloak.docker.localhost/realms/nexbridge` |
+
+### Dependency-Track
+
+**Administration → Configuration → OpenID Connect**
+
+| Field | Value |
+|-------|-------|
+| Enable OpenID Connect | ✓ |
+| Issuer | `https://keycloak.docker.localhost/realms/nexbridge` |
+| Client ID | `dependency-track` |
+
+**SMTP (Mailpit) — for CVE email testing:**
+
+**Administration → Notifications → Alert Configuration**
+
+| Field | Value |
+|-------|-------|
+| SMTP Server Hostname | `mail` (Docker network name) or `mail.docker.localhost` |
+| SMTP Server Port | `1025` |
+| SMTP TLS | disabled |
+| From address | `dtrack@nexbridge.local` |
+
+All notification emails land in **https://mail.docker.localhost** — no real SMTP needed.
+
+---
+
+## 5. DevPortal Configuration
+
+Copy `.env.local` to `.env` and fill in the token/password values:
 
 ```bash
-git clone <your-devportal-repo-url>
-cd devportal
-
-make setup                                               # 1. generate secrets + create .env
-docker compose -f docker-compose.standalone.yml up -d   # 2. start postgres + devportal
-open http://localhost:8080                               # 3. open the portal
+cp .env.local .env
 ```
 
-Then complete first login (see [First Login](#first-login)).
+Values to fill in (get these from each tool):
 
-To stop everything:
+| Variable | Where to get it |
+|----------|----------------|
+| `DB_PASSWORD` | your Postgres password for the `devportal` user |
+| `ENCRYPTION_KEY` | `openssl rand -base64 32` |
+| `GITEA_TOKEN` | Gitea → Settings → Applications → Generate Token (scope: all) |
+| `JENKINS_TOKEN` | Jenkins → your user → Configure → API Token → Add new Token |
+| `HARBOR_TOKEN` | Harbor admin password (or robot account secret) |
+| `DEFECTDOJO_TOKEN` | DefectDojo → API v2 → `/api/v2/` → Auth Token endpoint |
+| `DEPENDENCY_TRACK_API_KEY` | DT → Administration → Teams → create team → API Keys → Generate |
+| `OIDC_CLIENT_SECRET` | Keycloak → nexbridge → Clients → devportal → Credentials |
 
-```bash
-docker compose -f docker-compose.standalone.yml down
-```
-
-Data is persisted in a named Docker volume (`postgres-data`).
-
----
-
-## First Login
-
-DevPortal uses built-in local authentication by default (`AUTH_MODE=local`). No external IdP needed. There are no pre-seeded accounts — you create the first admin on first run.
-
-**Option A — via curl:**
-
-```bash
-curl -s -X POST http://localhost:8080/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name":     "Your Name",
-    "email":    "admin@example.com",
-    "password": "your-secure-password"
-  }'
-```
-
-**Option B — via UI:**
-
-Go to `http://localhost:8080` → click **Create account** (only visible before any accounts exist).
-
-The first account registered is automatically granted the `admin` role.
-
----
-
-## Two Compose Files
-
-| File | Use when | What it includes |
-|:-----|:---------|:-----------------|
-| `docker-compose.standalone.yml` | Any machine — laptop, CI, demo | Own postgres + devportal, port 8080 direct |
-| `docker-compose.yml` | Shared lab — existing Traefik + postgres + Gitea + Jenkins | devportal only, joins `traefik-net` |
-
-### Shared lab (docker-compose.yml)
-
-Used when postgres, Traefik, Gitea, Jenkins, DefectDojo, and Harbor are already running as separate compose projects on the same Docker host. DevPortal joins `traefik-net` and is routed via `devportal.localhost`.
-
-Requires the external postgres to have the `devportal` database and user pre-created:
+Create the DevPortal database (one time):
 
 ```bash
 docker exec postgres psql -U postgres -c "
   CREATE DATABASE devportal;
-  CREATE USER devportal WITH PASSWORD 'your-password';
+  CREATE USER devportal WITH PASSWORD 'devportal';
   GRANT ALL PRIVILEGES ON DATABASE devportal TO devportal;
   ALTER DATABASE devportal OWNER TO devportal;
 "
@@ -158,323 +247,292 @@ docker exec postgres psql -U postgres -c "
 
 ---
 
-## Migrations — Automatic at Startup
+## 6. Running DevPortal Locally
 
-Schema migrations run automatically every time the application starts. No manual `psql` commands or migration tools.
+### Option A — Go binary (fastest for development)
 
-How it works:
+```bash
+# Build frontend
+cd web && npm ci && npm run build && cd ..
 
-1. The runner creates a `schema_migrations` tracking table on first start.
-2. All `*.sql` files embedded in the binary (from `internal/db/migrations/`) are sorted by filename.
-3. Any file not recorded in `schema_migrations` is applied inside a transaction.
-4. After a successful apply, the filename is recorded — it never runs again.
-5. If a migration fails, the transaction rolls back and the application exits with a clear error.
+# Run API (migrations run automatically on startup)
+make dev
+# or: go run ./cmd/devportal
+```
 
-Current migration count: **8**
+DevPortal listens on `:8080`. With `AUTH_MODE=local`, no Keycloak needed for first login.
+
+### Option B — Docker (matches production)
+
+```bash
+# Build image
+docker build -t devportal:dev .
+
+# Run (joined to same Docker network as other tools)
+docker run -d \
+  --name devportal \
+  --network traefik-net \
+  -l "traefik.enable=true" \
+  -l "traefik.http.routers.devportal.rule=Host(\`devportal.localhost\`)" \
+  -l "traefik.http.routers.devportal.tls=true" \
+  --env-file .env \
+  devportal:dev
+```
+
+Or use the compose file (joins `traefik-net` automatically):
+
+```bash
+docker compose up -d
+```
+
+---
+
+## 7. First Login and Initial Setup
+
+### Local auth (AUTH_MODE=local)
+
+Register the first admin account — only available before any user exists:
+
+```bash
+curl -X POST https://devportal.localhost/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":     "Labiyb Said",
+    "email":    "admin@nexbridge.local",
+    "password": "your-password"
+  }'
+```
+
+The first account is automatically granted `admin` role.
+
+### OIDC (AUTH_MODE=oidc)
+
+1. Import the Keycloak realm (see §3)
+2. Create a user in the `nexbridge` realm and add them to `devportal-admins`
+3. Set `AUTH_MODE=oidc` and fill `OIDC_CLIENT_SECRET` in `.env`
+4. Go to **https://devportal.localhost** → you are redirected to Keycloak → login → redirected back
+
+### Platform Engineering — Admin setup (do this before first provisioning)
+
+Log in as admin → **Platform** in the sidebar:
+
+1. **Clusters** → Add a cluster per environment (or leave empty — steps 13–15 skip gracefully)
+2. **Platform Services** → For each cluster, configure CNPG / Kafka / Redis / RabbitMQ / MinIO namespaces
+3. **Environment Profiles** → Set CPU / memory / replica limits per tier
+4. **Manifest Templates** → Review defaults (auto-seeded on startup); edit if needed
+
+---
+
+## 8. Testing End-to-End
+
+### What will work (no k8s cluster needed)
+
+Steps 1–12 and 17 all call real tools:
+
+| Step | Expected result |
+|------|----------------|
+| 1–2 | DefectDojo product + engagement visible at `defectdojo.docker.localhost` |
+| 3–5 | Repository appears in Gitea at `git.docker.localhost/<team>/<service>` with Jenkinsfile committed |
+| 6–8 | Jenkins job appears at `jenkins.docker.localhost/<team>/<service>` |
+| 9–10 | Harbor project + robot account at `harbor.docker.localhost` |
+| 11 | Gitea webhook registered — push to any branch triggers Jenkins |
+| 12 | `<app>-k8s` manifest repo created in Gitea with Kustomize base + overlays |
+| 13–15 | Logged as skipped (ArgoCD not configured) — not a failure |
+| 16 | Logged as skipped (Vault not configured) — not a failure |
+| 17 | DT project created at `dtrack.docker.localhost`; check `mail.docker.localhost` for test notification |
+
+### Step by step
+
+1. **Create a team** — Admin → Teams → New Team
+2. **Create an application** — Applications → New Application → assign to team
+3. **Add members** — Application → Members → add a second user; check DefectDojo + Harbor for updated membership
+4. **Create a service** — Applications → `<app>` → New Service → fill the wizard → Provision
+5. **Watch live progress** — the step stream shows real-time results; steps 13–15 show "skipped"
+6. **Verify in each tool**:
+   - Gitea: repo + Jenkinsfile exist
+   - Jenkins: job runs DEVPORTAL_BOOTSTRAP scan
+   - Harbor: project + robot account exist
+   - DefectDojo: product + engagement exist, member is listed
+   - Dependency-Track: project exists; check Mailpit for notification email
+7. **Push code** — `git clone` the new repo, push a commit, watch Jenkins build → Harbor image push
+
+---
+
+## 9. Database Migrations
+
+Schema migrations run automatically every time DevPortal starts. No manual SQL.
+
+Current migration count: **13**
 
 ```sql
--- Check applied migrations:
+-- Check what has run:
 SELECT version, applied_at FROM schema_migrations ORDER BY applied_at;
 ```
 
----
+### Adding a migration
 
-## Adding a New Migration
-
-1. Create a new file in `internal/db/migrations/`:
-
-   ```
-   009_your_change_description.sql
-   ```
-
-2. Write standard SQL — the runner wraps it in a transaction:
-
-   ```sql
-   ALTER TABLE projects ADD COLUMN IF NOT EXISTS slack_channel TEXT;
-   CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects (slug);
-   ```
-
-3. Rebuild:
-
-   ```bash
-   make up   # Docker: rebuild image + restart
-   ```
-
-**Rules:**
-- Always use `IF NOT EXISTS` / `IF EXISTS`.
-- Never rename or delete an existing migration file.
-- Never modify an already-applied migration — create a new one instead.
+1. Create `internal/db/migrations/014_your_change.sql`
+2. Use `IF NOT EXISTS` / `IF EXISTS` — migrations run inside a transaction and are never replayed
+3. `make dev` or `docker compose up -d --build` — migration runs on next startup
 
 ---
 
-## Environment Variables
+## 10. Jenkins Credentials Setup
 
-All configuration comes from `.env`. Copy `.env.example` and fill in values. Only two are required to start:
+Create these in **Manage Jenkins → Credentials → System → Global → Add credentials** before any pipeline runs:
 
-| Variable | Required | Description |
-|:---------|:--------:|:------------|
-| `DB_PASSWORD` | Yes | PostgreSQL password for the devportal user |
-| `ENCRYPTION_KEY` | Yes | AES-256-GCM key. Generate: `openssl rand -base64 32` |
+| Credential ID | Kind | Value |
+|--------------|------|-------|
+| `robot-jenkins` | Username with password | User: `robot$devportal` · Password: Harbor robot token from step 10 |
+| `gitea-token` | Username with password | Gitea bot username + `GITEA_TOKEN` from `.env` |
+| `cosign-private-key` | Secret file | Upload `cosign.key` |
+| `cosign-password` | Secret text | cosign key passphrase |
+| `dependency-track-api-key` | Secret text | DT team API key (`DEPENDENCY_TRACK_API_KEY`) |
+| `sonarqube-token` | Secret text | SonarQube user token (Administration → Security → Users → Tokens) |
 
-All other variables are optional at startup. The UI and all admin features work without them. Provisioning errors only appear when you trigger a provisioning run and a required variable is missing.
+**SonarQube in Jenkins** — also configure the SonarQube server:
 
-| Category | Variables |
-|:---------|:----------|
-| HTTP | `HTTP_ADDR` |
-| Database | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL_MODE` |
-| Auth | `AUTH_MODE` (`local` or `oidc`), `ORG_NAME`, `ORG_SLUG` |
-| OIDC / Keycloak | `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `OIDC_ADMIN_GROUP`, `OIDC_DEVELOPER_GROUP` |
-| Gitea (primary SCM) | `GITEA_URL`, `GITEA_TOKEN`, `BOT_NAME`, `BOT_EMAIL` |
-| GitLab (fallback SCM) | `GITLAB_URL`, `GITLAB_TOKEN` |
-| Jenkins | `JENKINS_URL`, `JENKINS_PUBLIC_URL`, `JENKINS_USER`, `JENKINS_TOKEN`, `GIT_CREDENTIALS_ID` |
-| Harbor | `HARBOR_URL`, `HARBOR_USER`, `HARBOR_TOKEN` |
-| DefectDojo | `DEFECTDOJO_URL`, `DEFECTDOJO_TOKEN` |
-| ArgoCD | `ARGOCD_URL`, `ARGOCD_TOKEN`, `ARGOCD_INSECURE` |
-| App DB provisioning | `APP_DB_HOST`, `APP_DB_PORT`, `APP_DB_ADMIN_USER`, `APP_DB_ADMIN_PASSWORD` |
-| Jenkinsfile generation | `REGISTRY_URL`, `REGISTRY_CREDENTIALS_ID`, `GIT_CREDENTIALS_ID`, `SHARED_LIBRARY_URL`, `DEPENDENCY_TRACK_URL`, `DEPENDENCY_TRACK_API_KEY_ID`, `K8S_MANIFEST_GROUP`, `INGRESS_BASE_DOMAIN` |
-| Worker | `WORKER_CONCURRENCY` (default: 3) |
-| Branding | `BRAND_APP_NAME`, `BRAND_COMPANY`, `BRAND_PRIMARY_HUE`, `BRAND_LOGO_URL` |
-| TLS | `TLS_SKIP_VERIFY` |
+**Manage Jenkins → System → SonarQube servers → Add**
+- Name: `SonarQube`
+- Server URL: `https://sonarqube.docker.localhost`
+- Server authentication token: `sonarqube-token` credential
 
 ---
 
-## Platform Engineering Admin
+## 11. Image Signing (Cosign)
 
-The **Platform** page in the sidebar (admin only) is the control plane for the IDP layer:
+Every image pushed to Harbor is signed with [Cosign](https://docs.sigstore.dev/cosign/overview/). The signature is stored as an OCI artifact in Harbor. On a k8s cluster, Kyverno enforces that only signed images are admitted.
 
-### Cluster Registry
+The cosign key pair lives in:
+- `cosign.pub` — committed to this repo (public key, safe to share)
+- `cosign.key` — stored only in Jenkins as a Secret file credential (`cosign-private-key`)
 
-Register one Kubernetes cluster per environment. DevPortal reads these at provisioning time to know where to create ArgoCD Applications. Three environments are supported: `dev`, `uat`, `prod`.
-
-### Platform Services
-
-Per cluster, configure which managed services are available and their connection details: CloudNativePG, Kafka, MinIO, Redis, RabbitMQ, HashiCorp Vault, Gateway API.
-
-### Manifest Templates
-
-15 Kubernetes YAML templates editable at runtime. DevPortal substitutes `%%%TOKEN%%%` markers at provision time. Templates apply conditionally (e.g. "PostgreSQL only", "Production only").
-
-Default templates (applied in order):
-`Namespace → ResourceQuota → LimitRange → ServiceAccount → Role → RoleBinding → NetworkPolicy → VaultAuth → VaultStaticSecret → ConfigMap → Deployment → Service → HTTPRoute → CNPG Database → HPA`
-
-### Environment Profiles
-
-Resource limits and HPA settings per tier — inherited by every service:
-
-| Tier | Typical CPU | Typical Mem | HPA |
-|:-----|:------------|:------------|:----|
-| dev  | 50m → 200m  | 64Mi → 256Mi | off |
-| uat  | 100m → 500m | 128Mi → 512Mi | optional |
-| prod | 200m → 1000m | 256Mi → 1Gi | on |
-
----
-
-## Worker Process
-
-Provisioning is fully async. When a service is created, the API inserts a `provisioning_jobs` row and returns immediately (HTTP 201). The worker claims the job and runs the 15-step orchestrator.
-
-### Embedded (default)
-
-The worker runs as a goroutine pool inside `cmd/devportal`. SSE progress events reach the browser without any IPC bridge because the hub is in-process. `WORKER_CONCURRENCY` controls parallelism (default: 3).
-
-### Standalone (scale-out)
+To verify a signed image manually:
 
 ```bash
-# Build
-go build ./cmd/worker
-
-# Run (needs the same DB and integration env vars as the API)
-WORKER_CONCURRENCY=5 ./worker
-```
-
-Multiple standalone worker instances can run safely — `SELECT FOR UPDATE SKIP LOCKED` ensures each job is claimed by exactly one worker. Jobs stuck in `running` for more than 15 minutes are automatically reset to `pending` for retry.
-
----
-
-## Jenkins Setup
-
-Jenkins runs as a Docker container on `traefik-net` and is extended with a custom image (`Dockerfile.jenkins`) that adds Docker CLI and Cosign on top of the official `jenkins/jenkins` base.
-
-### Custom image
-
-The image is built automatically by the compose stack:
-
-```bash
-cd /path/to/Docker/traefik
-docker compose -f docker-compose.apps.yml build jenkins
-docker compose -f docker-compose.apps.yml up -d jenkins
-```
-
-What the custom image adds over the official Jenkins LTS:
-
-| Tool | Version | Purpose |
-|:-----|:--------|:--------|
-| Docker CLI (`docker-ce-cli`) | 29.x | Build and push images from pipeline steps |
-| Docker Compose plugin | 5.x | Run multi-container services in pipelines |
-| Cosign | v3.1.3 | Sign images after push (see [Image Signing](#image-signing-cosign)) |
-
-The Docker socket is bind-mounted from the host (`//var/run/docker.sock`) so Docker CLI inside Jenkins talks directly to the Docker Desktop daemon. No Docker-in-Docker daemon is needed.
-
-### Jenkins credentials required
-
-Create these credentials in **Manage Jenkins → Credentials → System → Global credentials** before running any pipeline:
-
-| Credential ID | Kind | Value | Purpose |
-|:-------------|:-----|:------|:--------|
-| `robot-jenkins` | Username with password | User: `robot$devportal` · Password: Harbor robot token | Push images to Harbor |
-| `gitea-token` | Username with password | Gitea bot username + token | Checkout and webhook auth |
-| `cosign-private-key` | Secret file | Upload `cosign.key` | Sign images with cosign |
-| `cosign-password` | Secret text | cosign key passphrase | Decrypt the signing key |
-| `dependency-track-api-key` | Secret text | Dependency-Track team API key | Upload SBOMs — get from DT UI: Administration → Teams → API Keys |
-
-### DevPortal env vars that feed into generated Jenkinsfiles
-
-| Variable | Example value | Effect |
-|:---------|:-------------|:-------|
-| `REGISTRY_URL` | `harbor.docker.localhost` | Base URL for `docker push` |
-| `REGISTRY_CREDENTIALS_ID` | `robot-jenkins` | Jenkins credential ID for Harbor login |
-| `GIT_CREDENTIALS_ID` | `gitea-token` | Jenkins credential ID for Gitea checkout |
-| `SHARED_LIBRARY_URL` | `http://gitea:3000/nexbridge/jenkins-shared-library.git` | Shared library loaded at pipeline start |
-| `JENKINS_URL` | `http://jenkins:8080` | Internal URL used by DevPortal to create jobs |
-| `JENKINS_PUBLIC_URL` | `https://jenkins.docker.localhost` | Public URL used in Gitea webhooks |
-
----
-
-## Image Signing (Cosign)
-
-Every Docker image pushed to Harbor is signed using [Cosign](https://docs.sigstore.dev/cosign/overview/) (Sigstore). The signature is stored as an OCI artifact alongside the image in Harbor. Kyverno enforces on each Kubernetes cluster that only signed images can be admitted.
-
-### How it works in the pipeline
-
-```
-docker build → docker push to Harbor
-                      │
-                      ▼
-              cosign sign --key cosign.key   (signature + annotations)
-              cosign attest --key cosign.key (machine-verifiable predicate)
-                      │
-                      ▼
-              Signature artifacts stored in Harbor
-                      │
-                      ▼
-              Kyverno ClusterPolicy rejects any Pod whose image
-              is not signed by the NexBridge cosign key
-```
-
-Signing runs as Stage 9 in the shared library (`signImage.groovy`) immediately after the image push. Annotations embedded in each signature:
-
-| Annotation | Value |
-|:-----------|:------|
-| `company` | `NexBridge` |
-| `project` | project name |
-| `service` | service/image name |
-| `branch` | source Git branch |
-| `environment` | `dev` / `uat` / `prod` (derived from branch) |
-| `git-commit` | full SHA |
-| `builder` | `jenkins` |
-| `build-number` | Jenkins build number |
-
-### Key management
-
-The key pair was generated with cosign inside the Jenkins container and is ECDSA P-256. The public key is committed to the repo at `pipeline/cosign.pub`. The private key is stored **only** in Jenkins as a Secret file credential — it is never committed to any repository.
-
-To regenerate the key pair (e.g. key rotation):
-
-```bash
-# Inside the Jenkins container
-docker exec -it jenkins sh
-COSIGN_PASSWORD="your-new-password" cosign generate-key-pair --output-key-prefix nexbridge
-```
-
-Then:
-1. Update `pipeline/cosign.pub` with the new public key
-2. Update the `publicKeys` field in `pipeline/resources/kyverno/01-verify-image-signature.yaml`
-3. Replace the `cosign-private-key` and `cosign-password` credentials in Jenkins
-4. Re-apply the Kyverno policy on all clusters
-
-### Verify a signed image manually
-
-```bash
-# From any machine with cosign installed
 COSIGN_INSECURE_SKIP_TLS_VERIFY=true \
-cosign verify --key pipeline/cosign.pub \
+cosign verify --key cosign.pub \
   harbor.docker.localhost/<project>/<image>:<tag>
 ```
 
-### Kyverno enforcement
-
-Apply once per cluster:
+To rotate the key pair:
 
 ```bash
-kubectl apply -f pipeline/resources/kyverno/01-verify-image-signature.yaml
+docker exec -it jenkins sh
+COSIGN_PASSWORD="new-password" cosign generate-key-pair --output-key-prefix nexbridge
 ```
 
-The policy runs in `Enforce` mode — any Pod whose image is not signed by the NexBridge cosign key is blocked at admission. Change `validationFailureAction` to `Audit` first to observe without blocking while rolling out to an existing cluster.
+Then update `cosign.pub` in the repo, update the Kyverno policy public key, and replace the Jenkins credential.
 
 ---
 
-## Local Development (No Docker)
+## 12. Deploying to Kubernetes (Helm)
+
+The Helm chart at `chart/` packages DevPortal for production Kubernetes deployments.
+
+### Prerequisites
 
 ```bash
-# 1. Create .env and fill in DB_* to point at your local postgres
-make setup
-
-# 2. Create the database (one time)
-createdb devportal
-createuser devportal
-psql -c "ALTER USER devportal WITH PASSWORD 'your-password';"
-psql -c "GRANT ALL PRIVILEGES ON DATABASE devportal TO devportal;"
-
-# 3. Start the Go API (migrations run automatically)
-make dev
-
-# 4. In a second terminal, start the React dev server
-cd web && npm ci && npm run dev
+# Create the secrets before installing
+kubectl create secret generic devportal-secrets \
+  --from-literal=DB_PASSWORD=xxx \
+  --from-literal=ENCRYPTION_KEY=xxx \
+  --from-literal=GITEA_TOKEN=xxx \
+  --from-literal=JENKINS_TOKEN=xxx \
+  --from-literal=HARBOR_TOKEN=xxx \
+  --from-literal=DEFECTDOJO_TOKEN=xxx \
+  --from-literal=OIDC_CLIENT_SECRET=xxx \
+  --from-literal=APP_DB_ADMIN_PASSWORD=xxx \
+  --from-literal=DEPENDENCY_TRACK_API_KEY=xxx
 ```
 
-The API listens on `:8080`. Vite proxies `/api/*` and `/auth/*` to `:8080` automatically — open `http://localhost:5173` for hot-reload UI.
+### Install
+
+```bash
+# Personal / homelab profile
+helm install devportal ./chart \
+  -f chart/profiles/personal.yaml \
+  --set config.authMode=oidc \
+  --set ingress.host=devportal.example.com \
+  --set ingress.traefik.enabled=true
+
+# Production profile
+helm install devportal ./chart \
+  -f chart/profiles/production.yaml \
+  --set config.authMode=oidc \
+  --set ingress.host=devportal.example.com \
+  --set ingress.traefik.enabled=true \
+  --set ingress.traefik.certResolver=letsencrypt
+```
+
+### Upgrade
+
+```bash
+helm upgrade devportal ./chart -f chart/profiles/personal.yaml
+```
+
+### Values
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `replicaCount` | `1` | Pod count (ignored when HPA enabled) |
+| `autoscaling.enabled` | `false` | Enable HPA |
+| `config.authMode` | `local` | `local` or `oidc` |
+| `config.argoCDURL` | `""` | Leave empty when no k8s cluster — steps 13–15 skipped |
+| `config.vaultURL` | `""` | Leave empty when no Vault — step 16 skipped |
+| `ingress.traefik.enabled` | `false` | Use Traefik IngressRoute instead of Ingress |
+| `existingSecret` | `devportal-secrets` | Name of the K8s Secret holding all sensitive values |
 
 ---
 
-## Deploying to Production
+## 13. Environment Variables Reference
 
-### Build the image
+All config comes from environment variables. Only `DB_PASSWORD` and `ENCRYPTION_KEY` are required at startup — everything else is optional and only fails at provisioning time when actually used.
 
-```bash
-docker build -t devportal:1.0.0 .
-```
-
-Multi-stage build:
-1. **Node 22-alpine** — `npm ci && npm run build` → `web/dist/`
-2. **Go 1.25-alpine** — copies `web/dist/`, compiles binary with `//go:embed` (frontend + migrations baked in)
-3. **Alpine 3.19** — runtime only, non-root user (UID 10001), HEALTHCHECK, ~15 MB final image
-
-### Push to Harbor
-
-```bash
-export REGISTRY_URL=harbor.docker.localhost  # your local Harbor
-make docker-push                             # builds, tags :version + :latest, pushes both
-```
-
-### Run in production
-
-```bash
-docker run -d \
-  --name devportal \
-  -p 8080:8080 \
-  -e DB_HOST=your-postgres-host \
-  -e DB_PASSWORD=your-db-password \
-  -e DB_SSL_MODE=require \
-  -e ENCRYPTION_KEY=your-base64-key \
-  -e AUTH_MODE=local \
-  devportal:1.0.0
-```
-
-Migrations run automatically on startup. No separate deploy step needed.
+| Variable | Required | Default | Description |
+|----------|:--------:|---------|-------------|
+| `DB_PASSWORD` | **yes** | — | DevPortal's own DB password |
+| `ENCRYPTION_KEY` | **yes** | — | AES-256-GCM key. `openssl rand -base64 32` |
+| `HTTP_ADDR` | no | `:8080` | Listen address |
+| `AUTH_MODE` | no | `local` | `local` or `oidc` |
+| `OIDC_ISSUER_URL` | oidc | — | `https://keycloak.docker.localhost/realms/nexbridge` |
+| `OIDC_CLIENT_ID` | oidc | `devportal` | Keycloak client ID |
+| `OIDC_CLIENT_SECRET` | oidc | — | Keycloak client secret |
+| `OIDC_REDIRECT_URL` | oidc | — | `https://devportal.localhost/auth/callback` |
+| `OIDC_ADMIN_GROUP` | no | `devportal-admins` | Keycloak group → admin role |
+| `OIDC_DEVELOPER_GROUP` | no | `devportal-developers` | Keycloak group → developer role |
+| `GIT_PROVIDER` | no | `gitea` | `gitea` or `gitlab` |
+| `GITEA_URL` | no | — | `https://git.docker.localhost` |
+| `GITEA_TOKEN` | no | — | Gitea PAT (scope: all) |
+| `JENKINS_URL` | no | — | `https://jenkins.docker.localhost` |
+| `JENKINS_PUBLIC_URL` | no | — | Public Jenkins URL (used in webhooks) |
+| `JENKINS_TOKEN` | no | — | Jenkins API token |
+| `HARBOR_URL` | no | — | `https://harbor.docker.localhost` |
+| `HARBOR_TOKEN` | no | — | Harbor admin password |
+| `DEFECTDOJO_URL` | no | — | `https://defectdojo.docker.localhost` |
+| `DEFECTDOJO_TOKEN` | no | — | DefectDojo API token |
+| `DEPENDENCY_TRACK_URL` | no | — | `https://dtrack.docker.localhost` |
+| `DEPENDENCY_TRACK_API_KEY` | no | — | DT team API key (DevPortal direct calls) |
+| `DEPENDENCY_TRACK_API_KEY_ID` | no | `dependency-track-api-key` | Jenkins credential ID for Jenkinsfile |
+| `ARGOCD_URL` | no | — | Leave empty without k8s cluster |
+| `ARGOCD_TOKEN` | no | — | ArgoCD account token |
+| `VAULT_URL` | no | — | Leave empty without Vault |
+| `VAULT_TOKEN` | no | — | Vault provisioner token |
+| `VAULT_KV_MOUNT` | no | `secret` | KV v2 mount path |
+| `VAULT_K8S_AUTH_MOUNT` | no | `kubernetes` | K8s auth mount path |
+| `VAULT_USE_VSO` | no | `false` | `true` = VSO CRs, `false` = ESO ExternalSecret |
+| `REGISTRY_URL` | no | — | `harbor.docker.localhost` (no https://) |
+| `REGISTRY_CREDENTIALS_ID` | no | `robot-jenkins` | Jenkins credential ID |
+| `GIT_CREDENTIALS_ID` | no | — | Jenkins credential ID for Gitea |
+| `SHARED_LIBRARY_URL` | no | — | Jenkins shared library Git URL |
+| `K8S_MANIFEST_GROUP` | no | `kubernetes-manifest` | Gitea org for manifest repos |
+| `INGRESS_BASE_DOMAIN` | no | — | `docker.localhost` |
+| `WORKER_CONCURRENCY` | no | `3` | Parallel provisioning jobs |
+| `TLS_SKIP_VERIFY` | no | `true` | Disable TLS cert verification for local tools |
 
 ---
 
-## make help — All Targets
+## 14. make help
 
 ```
 DevPortal — NexBridge Technologies
@@ -499,4 +557,4 @@ DevPortal — NexBridge Technologies
 ---
 
 **Organisation:** NexBridge Technologies  
-**Last Updated:** 2026-08-11 — see [`ARCHITECTURE.md`](ARCHITECTURE.md) for full IDP design and roadmap
+**Last updated:** 2026-08-23 — see [`GOALS.md`](GOALS.md) for phase tracker
