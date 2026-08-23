@@ -23,9 +23,10 @@ Internal Developer Platform (IDP). A developer fills one 7-step form and gets a 
 9. [Database Migrations](#9-database-migrations)
 10. [Jenkins Credentials Setup](#10-jenkins-credentials-setup)
 11. [Image Signing (Cosign)](#11-image-signing-cosign)
-12. [Deploying to Kubernetes (Helm — P5)](#12-deploying-to-kubernetes-helm)
-13. [Environment Variables Reference](#13-environment-variables-reference)
-14. [make help](#14-make-help)
+12. [Deploying to Kubernetes (Helm)](#12-deploying-to-kubernetes-helm)
+13. [Deploying to Another Environment](#13-deploying-to-another-environment)
+14. [Environment Variables Reference](#14-environment-variables-reference)
+15. [make help](#15-make-help)
 
 ---
 
@@ -485,7 +486,83 @@ helm upgrade devportal ./chart -f chart/profiles/personal.yaml
 
 ---
 
-## 13. Environment Variables Reference
+## 13. Deploying to Another Environment
+
+DevPortal is a single Docker image. Every environment (homelab, staging, production) runs the **same image** — only `.env` changes. No rebuild needed for a new environment or a new customer.
+
+### What changes between environments
+
+| What | Local lab | Staging / Production |
+|------|-----------|----------------------|
+| All tool URLs | `*.docker.localhost` | your actual domain, e.g. `*.example.com` |
+| `OIDC_ISSUER_URL` | `https://keycloak.docker.localhost/realms/nexbridge` | update domain + realm name if you rename it |
+| `OIDC_REDIRECT_URL` | `https://devportal.localhost/auth/callback` | `https://devportal.example.com/auth/callback` |
+| `INGRESS_BASE_DOMAIN` | `docker.localhost` | `example.com` — baked into generated K8s Ingress manifests |
+| `REGISTRY_URL` | `harbor.docker.localhost` | `harbor.example.com` — baked into generated Jenkinsfiles |
+| `SHARED_LIBRARY_URL` | Gitea URL on the local network | Gitea URL on the new network |
+| `TLS_SKIP_VERIFY` | `true` (self-signed Traefik certs) | `false` (valid certs from cert-manager / Let's Encrypt) |
+| `DB_SSL_MODE` | `disable` | `require` |
+| `AUTH_MODE` | `local` (no Keycloak needed) | `oidc` (Keycloak backed by AD/LDAP) |
+| `ARGOCD_URL` / `VAULT_URL` | empty (graceful skip) | set when cluster is available |
+
+### Step-by-step for a new environment
+
+1. **Copy the config template**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Set all URLs** — replace every `docker.localhost` occurrence with your new domain.
+
+3. **Generate required secrets**
+   ```bash
+   # Encryption key (one-time per environment — never reuse across envs)
+   openssl rand -base64 32    # → ENCRYPTION_KEY
+
+   # DB password
+   openssl rand -hex 16       # → DB_PASSWORD
+   ```
+
+4. **SCM provider** — if you are using GitLab instead of Gitea:
+   ```bash
+   GIT_PROVIDER=gitlab
+   GITLAB_URL=https://gitlab.example.com
+   GITLAB_TOKEN=glpat-xxx
+   ```
+   If staying on Gitea, leave `GIT_PROVIDER=gitea` (the default) and fill `GITEA_URL`/`GITEA_TOKEN`.
+
+5. **Import the Keycloak realm** (see §3) — but update redirect URIs in `keycloak/realm-export.json` to use the new domain before importing, or edit them in the Keycloak admin UI after import.
+
+6. **Keycloak client secrets** — regenerate each client secret in Keycloak and copy the new values into each tool's OIDC config AND into your `.env`.
+
+7. **Branding** — no rebuild needed. Change `BRAND_*` vars in `.env` and restart:
+   - `BRAND_APP_NAME` — portal title in nav and login page
+   - `BRAND_COMPANY` — organisation name under the logo
+   - `BRAND_PRIMARY_HUE` — HSL hue (0–360): `199` sky blue · `142` green · `262` purple · `221` indigo · `38` amber
+   - `BRAND_LOGO_URL` — URL to a hosted SVG or PNG logo
+   
+   React fetches `GET /branding.json` at boot and applies them instantly. The same Docker image can serve multiple customers or orgs with completely different branding.
+
+8. **Database** — create the devportal DB on the target Postgres instance (same `CREATE DATABASE` command as §5), then set `DB_HOST`, `DB_USER`, `DB_PASSWORD` in `.env`.
+
+9. **Start** — `docker compose up -d` or `helm install` (see §12).
+
+### Things baked into generated files at provisioning time
+
+These values are written into Jenkinsfiles and K8s manifest repos when a service is first provisioned. Changing them in `.env` afterwards does NOT retroactively update already-provisioned services — only new services pick up the new values.
+
+| Variable | Baked into |
+|----------|-----------|
+| `REGISTRY_URL` | every generated `Jenkinsfile` (image push/pull URL) |
+| `INGRESS_BASE_DOMAIN` | every generated K8s `Ingress` / `IngressRoute` host rule |
+| `SHARED_LIBRARY_URL` | every generated `Jenkinsfile` `@Library` annotation |
+| `DEPENDENCY_TRACK_API_KEY_ID` | every generated `Jenkinsfile` DT upload step |
+
+If you need to migrate already-provisioned services to a new domain, re-run provisioning or manually update the committed Jenkinsfiles in each service's Git repo.
+
+---
+
+## 14. Environment Variables Reference
 
 All config comes from environment variables. Only `DB_PASSWORD` and `ENCRYPTION_KEY` are required at startup — everything else is optional and only fails at provisioning time when actually used.
 
@@ -529,10 +606,16 @@ All config comes from environment variables. Only `DB_PASSWORD` and `ENCRYPTION_
 | `INGRESS_BASE_DOMAIN` | no | — | `docker.localhost` |
 | `WORKER_CONCURRENCY` | no | `3` | Parallel provisioning jobs |
 | `TLS_SKIP_VERIFY` | no | `true` | Disable TLS cert verification for local tools |
+| `BRAND_APP_NAME` | no | `DevPortal` | Portal title in nav bar and login page |
+| `BRAND_COMPANY` | no | — | Organisation name shown under the logo |
+| `BRAND_PRIMARY_HUE` | no | `199` | HSL hue (0–360) for entire primary colour palette. No rebuild needed. |
+| `BRAND_LOGO_URL` | no | — | URL to a hosted logo image (SVG or PNG) |
+
+> **Branding is fully runtime.** React fetches `GET /branding.json` at boot. Change any `BRAND_*` var, restart the container — new name, colour, and logo are applied instantly with no image rebuild. Deploy the same Docker image to multiple customers and brand each one via env vars only.
 
 ---
 
-## 14. make help
+## 15. make help
 
 ```
 DevPortal — NexBridge Technologies
@@ -557,4 +640,4 @@ DevPortal — NexBridge Technologies
 ---
 
 **Organisation:** NexBridge Technologies  
-**Last updated:** 2026-08-23 — see [`GOALS.md`](GOALS.md) for phase tracker
+**Last updated:** 2026-08-23 — sections 13–15 added (environment migration guide, branding docs, env var table updated)
