@@ -41,6 +41,7 @@ import (
 	"github.com/ALabiyb/platform_devportal/internal/config"
 	"github.com/ALabiyb/platform_devportal/internal/db"
 	"github.com/ALabiyb/platform_devportal/internal/handler"
+	"github.com/ALabiyb/platform_devportal/internal/membersync"
 	"github.com/ALabiyb/platform_devportal/internal/plugin"
 	"github.com/ALabiyb/platform_devportal/internal/provisioner"
 	tmpl "github.com/ALabiyb/platform_devportal/internal/template"
@@ -83,6 +84,9 @@ func main() {
 	if err := seedLanguageProfiles(seedCtx, database); err != nil {
 		slog.Warn("language profile seeding failed — probe timing defaults may be missing", "err", err)
 	}
+	if err := seedManifestTemplates(seedCtx, database); err != nil {
+		slog.Warn("manifest template seeding failed — admin template editor may show empty content", "err", err)
+	}
 
 	// Shared HTTP client used for all outbound calls (Keycloak, GitLab, Jenkins, etc.).
 	// TLS_SKIP_VERIFY=true allows self-signed certs in local dev — set false in prod.
@@ -105,6 +109,8 @@ func main() {
 	securityAdapter := plugin.NewDefectDojoAdapter(cfg, httpClient)
 	gitopsAdapter := plugin.NewArgoCDAdapter(cfg, httpClient)
 	dbAdapter := plugin.NewPostgresDBAdapter(cfg)
+	vaultAdapter := plugin.NewVaultAdapter(cfg, httpClient)
+	dtAdapter := plugin.NewDependencyTrackAdapter(cfg, httpClient)
 	slog.Info("plugin adapters ready")
 
 	// Template generator bakes config values into Jenkinsfiles and K8s manifests.
@@ -114,12 +120,15 @@ func main() {
 	// Step events broadcast here reach connected SSE clients without any IPC.
 	hub := provisioner.NewHub()
 
+	// Member sync service — propagates member changes to all platform tools.
+	syncer := membersync.New(database, securityAdapter, registryAdapter, dtAdapter)
+
 	// Orchestrator is wired to the shared hub so worker step events appear
 	// in the browser's SSE stream in real time.
 	orch := provisioner.New(
 		database, hub,
 		gitAdapter, ciAdapter, registryAdapter,
-		securityAdapter, gitopsAdapter, dbAdapter,
+		securityAdapter, gitopsAdapter, dbAdapter, vaultAdapter, dtAdapter,
 		cfg, templates,
 	)
 	slog.Info("provisioner ready")
@@ -138,7 +147,7 @@ func main() {
 
 	// Wire up the full chi router. The orchestrator is no longer passed to the
 	// handler — handlers enqueue jobs to provisioning_jobs instead of calling it.
-	h := handler.New(database, cfg, authHandler, gitAdapter, hub, web.FS, version)
+	h := handler.New(database, cfg, authHandler, gitAdapter, hub, web.FS, version, syncer)
 
 	// HTTP server with explicit timeouts.
 	// WriteTimeout is omitted — SSE streams need unbounded write time.
@@ -263,6 +272,54 @@ func seedLanguageProfiles(ctx context.Context, database *db.DB) error {
 		return err
 	}
 	slog.Info("language profiles seeded", "count", len(seeds))
+	return nil
+}
+
+// seedManifestTemplates inserts default Go template content for every named manifest template.
+// ON CONFLICT DO NOTHING — admin edits made through the UI are always preserved.
+func seedManifestTemplates(ctx context.Context, database *db.DB) error {
+	displayNames := map[string]string{
+		"base-kustomization":      "Base Kustomization",
+		"base-deployment":         "Base Deployment",
+		"base-service":            "Base Service",
+		"overlay-kustomization":   "Overlay Kustomization",
+		"overlay-namespace":       "Overlay Namespace",
+		"overlay-ingressroute":    "Overlay IngressRoute (Traefik CRD)",
+		"overlay-middleware":      "Overlay Middleware (Traefik CRD)",
+		"overlay-gateway":         "Overlay Gateway (K8s Gateway API)",
+		"overlay-httproute":       "Overlay HTTPRoute (K8s Gateway API)",
+		"overlay-infra-configmap": "Overlay Infra Connection ConfigMap",
+		"overlay-external-secret": "Overlay ExternalSecret (ESO / Vault)",
+		"base-serviceaccount":     "Base ServiceAccount",
+		"overlay-resources-patch": "Overlay Resources Patch",
+		"overlay-hpa":             "Overlay HPA (prod only)",
+		"overlay-networkpolicy":        "Overlay NetworkPolicy",
+		"overlay-vault-auth":           "Overlay VaultAuth CR (VSO)",
+		"overlay-vault-static-secret":  "Overlay VaultStaticSecret CR (VSO)",
+		"infra-kustomization":          "Infra Kustomization",
+		"infra-cnpg-database":          "Infra CNPG Database CR",
+		"infra-kafka-topics":           "Infra Kafka Topics CR",
+		"infra-rabbitmq":               "Infra RabbitMQ CR",
+		"infra-minio-job":              "Infra MinIO Bucket Init Job",
+		"infra-redis-acl-job":          "Infra Redis ACL Init Job",
+	}
+	defaults := tmpl.DefaultTemplateContent()
+	seeds := make([]db.ManifestTemplate, 0, len(defaults))
+	for name, content := range defaults {
+		dn := displayNames[name]
+		if dn == "" {
+			dn = name
+		}
+		seeds = append(seeds, db.ManifestTemplate{
+			Name:        name,
+			DisplayName: dn,
+			Content:     content,
+		})
+	}
+	if err := database.SeedManifestTemplates(ctx, seeds); err != nil {
+		return err
+	}
+	slog.Info("manifest templates seeded", "count", len(seeds))
 	return nil
 }
 

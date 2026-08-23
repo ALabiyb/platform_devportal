@@ -138,6 +138,7 @@ type Config struct {
 	SharedLibraryURL      string // Env: SHARED_LIBRARY_URL      · REQUIRED  (Git URL of Jenkins shared library)
 	DependencyTrackURL      string // Env: DEPENDENCY_TRACK_URL       · REQUIRED
 	DependencyTrackAPIKeyID string // Env: DEPENDENCY_TRACK_API_KEY_ID · Jenkins credential ID holding the team API key
+	DependencyTrackAPIKey   string // Env: DEPENDENCY_TRACK_API_KEY   · DT team API key for DevPortal direct calls (project + notification mgmt)
 	K8sManifestGroup      string // Env: K8S_MANIFEST_GROUP      · Default: kubernetes-manifest
 	IngressBaseDomain     string // Env: INGRESS_BASE_DOMAIN     · REQUIRED  (base domain for app ingress URLs)
 
@@ -152,6 +153,16 @@ type Config struct {
 	RabbitMQClusterNamespace string // Env: RABBITMQ_CLUSTER_NAMESPACE  · Default: rabbitmq
 	RedisNamespace           string // Env: REDIS_NAMESPACE             · Default: redis
 	MinIONamespace           string // Env: MINIO_NAMESPACE             · Default: minio
+
+	// ── Vault ────────────────────────────────────────────────────────────────
+	// Used at provision time to create a per-service KV path, ACL policy, and
+	// Kubernetes auth role. Optional — provisioning continues if unset, but the
+	// Vault path will be empty and the platform team must seed secrets manually.
+	VaultURL          string // Env: VAULT_URL          · REQUIRED for Vault integration
+	VaultToken        string // Env: VAULT_TOKEN        · REQUIRED for Vault integration (root or provisioner token)
+	VaultKVMount      string // Env: VAULT_KV_MOUNT     · Default: secret
+	VaultK8sAuthMount string // Env: VAULT_K8S_AUTH_MOUNT · Default: kubernetes
+	VaultUseVSO       bool   // Env: VAULT_USE_VSO      · Default: false (uses ESO ExternalSecret; true = VSO VaultStaticSecret)
 
 	// ── Git Bot Commit Author ────────────────────────────────────────────────
 	// Author on commits made by devportal (Jenkinsfile, manifests, VERSION).
@@ -263,6 +274,7 @@ func Load() *Config {
 		SharedLibraryURL:      env("SHARED_LIBRARY_URL", ""),
 		DependencyTrackURL:      env("DEPENDENCY_TRACK_URL", ""),
 		DependencyTrackAPIKeyID: env("DEPENDENCY_TRACK_API_KEY_ID", "dependency-track-api-key"),
+		DependencyTrackAPIKey:   env("DEPENDENCY_TRACK_API_KEY", ""),
 		K8sManifestGroup:      env("K8S_MANIFEST_GROUP", "kubernetes-manifest"),
 		IngressBaseDomain:     env("INGRESS_BASE_DOMAIN", ""),
 
@@ -274,6 +286,13 @@ func Load() *Config {
 		RabbitMQClusterNamespace: env("RABBITMQ_CLUSTER_NAMESPACE", "rabbitmq"),
 		RedisNamespace:           env("REDIS_NAMESPACE", "redis"),
 		MinIONamespace:           env("MINIO_NAMESPACE", "minio"),
+
+		// Vault — only needed when provisioning Vault secrets paths
+		VaultURL:          env("VAULT_URL", ""),
+		VaultToken:        env("VAULT_TOKEN", ""),
+		VaultKVMount:      env("VAULT_KV_MOUNT", "secret"),
+		VaultK8sAuthMount: env("VAULT_K8S_AUTH_MOUNT", "kubernetes"),
+		VaultUseVSO:       env("VAULT_USE_VSO", "false") != "false",
 
 		// Bot — only needed when committing generated files to GitLab
 		BotName:  env("BOT_NAME", "DevPortal Bot"),

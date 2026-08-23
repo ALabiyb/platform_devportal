@@ -246,13 +246,18 @@ func (h *Handler) AddApplicationMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync to GitLab group.
+	// Sync to Gitea group.
 	if h.git != nil && app != nil {
 		level := 30 // Developer
 		if role == "lead" {
 			level = 40 // Maintainer
 		}
 		_ = h.git.AddGroupMember(r.Context(), app.GitNamespace, targetUser.Email, level)
+	}
+
+	// Fan out to DefectDojo, Harbor, and Dependency-Track (non-blocking).
+	if h.syncer != nil {
+		go h.syncer.SyncApplicationMembers(r.Context(), appID)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -289,9 +294,14 @@ func (h *Handler) RemoveApplicationMember(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Sync removal to GitLab.
+	// Sync removal to Gitea.
 	if h.git != nil && app != nil && targetUser != nil {
 		_ = h.git.RemoveGroupMember(r.Context(), app.GitNamespace, targetUser.Email)
+	}
+
+	// Fan out removal to DefectDojo, Harbor, and Dependency-Track (non-blocking).
+	if h.syncer != nil {
+		go h.syncer.SyncApplicationMembers(r.Context(), appID)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -343,6 +353,7 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name              string `json:"name"`
 		BuildTool         string `json:"build_tool"`
+		ServiceKind       string `json:"service_kind"`
 		NotificationEmail string `json:"notification_email"`
 		AppTimezone       string `json:"app_timezone"`
 		StagingURL        string `json:"staging_url"`
@@ -375,6 +386,9 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BuildTool == "" {
 		req.BuildTool = "auto"
+	}
+	if req.ServiceKind != "frontend" && req.ServiceKind != "worker" {
+		req.ServiceKind = "backend"
 	}
 
 	tz := req.AppTimezone
@@ -418,6 +432,7 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		Name:              req.Name,
 		Slug:              slug,
 		BuildTool:         req.BuildTool,
+		ServiceKind:       req.ServiceKind,
 		NotificationEmail: req.NotificationEmail,
 		HarborProject:     app.Slug + "/" + slug,
 		JenkinsFolder:     app.Slug,
@@ -516,6 +531,23 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "enqueue provisioning: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Fire-and-forget audit record so a slow DB write never blocks the 201.
+	go func() {
+		rid := project.ID
+		_ = h.db.InsertAuditEvent(context.Background(), db.AuditEvent{
+			OrgID:        app.OrgID,
+			UserID:       &user.ID,
+			Action:       "service.created",
+			ResourceType: "service",
+			ResourceID:   &rid,
+			Detail: db.AuditEventDetail(map[string]any{
+				"name":       project.Name,
+				"build_tool": project.BuildTool,
+				"app":        app.Name,
+			}),
+		})
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

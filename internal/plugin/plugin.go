@@ -54,6 +54,10 @@ type GitProvider interface {
 	// requires MR). Idempotent — no error if already protected.
 	EnsureProtectedBranch(ctx context.Context, repoPath, branch string) error
 
+	// CreateBranch creates newBranch as a reference pointing to fromBranch's
+	// current HEAD — no new commit is made. Idempotent (no error if branch exists).
+	CreateBranch(ctx context.Context, repoPath, newBranch, fromBranch string) error
+
 	// EnsureGroup creates a GitLab group at the root level (parentPath="") or as
 	// a subgroup under parentPath. Returns the numeric group ID. Idempotent.
 	EnsureGroup(ctx context.Context, slug, parentPath string) (int, error)
@@ -91,6 +95,10 @@ type RegistryProvider interface {
 	// EnsureRobotAccount creates a robot account with push+pull access to the
 	// project. Returns the credentials Jenkins uses to push images.
 	EnsureRobotAccount(ctx context.Context, projectName, robotName string) (*RobotCredential, error)
+
+	// SyncProjectMembers reconciles the Harbor project member list to exactly
+	// the given email list. Users not found in Harbor are silently skipped.
+	SyncProjectMembers(ctx context.Context, projectName string, emails []string) error
 }
 
 // SecurityProvider manages security scan products and engagements.
@@ -104,6 +112,10 @@ type SecurityProvider interface {
 	// CreateEngagement creates a CI/CD engagement under the product.
 	// Each project environment gets its own engagement.
 	CreateEngagement(ctx context.Context, input CreateEngagementInput) (int, error)
+
+	// SyncProductMembers reconciles the DefectDojo product member list to
+	// exactly the given email list. Users not found in DefectDojo are skipped.
+	SyncProductMembers(ctx context.Context, productID int, emails []string) error
 }
 
 // GitOpsProvider manages ArgoCD Applications for GitOps deployment.
@@ -118,6 +130,36 @@ type GitOpsProvider interface {
 
 	// GetApplicationStatus returns the current health and sync status.
 	GetApplicationStatus(ctx context.Context, appName string) (*AppStatus, error)
+}
+
+// DependencyTrackProvider manages Dependency-Track projects and notification rules.
+// Implemented by DependencyTrackAdapter.
+type DependencyTrackProvider interface {
+	// EnsureProject creates or returns the Dependency-Track project UUID for
+	// the given project name. Idempotent — returns existing UUID if found.
+	EnsureProject(ctx context.Context, projectName string) (string, error)
+
+	// EnsureEmailNotification creates or updates a notification rule named by
+	// ruleTag so that all listed emails receive alerts on new vulnerabilities.
+	// The rule is scoped to the given projectUUID. Idempotent.
+	EnsureEmailNotification(ctx context.Context, projectUUID, ruleTag string, emails []string) error
+}
+
+// VaultProvider provisions per-service Vault resources at provision time.
+// Implemented by VaultAdapter.
+type VaultProvider interface {
+	// EnsureKVSecret writes placeholder secret data to a KV v2 path.
+	// Keys that already have a non-empty value in Vault are never overwritten,
+	// so re-provisioning cannot clobber real passwords set by the platform team.
+	EnsureKVSecret(ctx context.Context, mount, path string, data map[string]string) error
+
+	// EnsurePolicy creates or replaces a Vault ACL policy by name.
+	// Safe to call multiple times — always overwrites with the current HCL.
+	EnsurePolicy(ctx context.Context, name, hcl string) error
+
+	// EnsureKubernetesRole creates or replaces a role in the Vault Kubernetes
+	// auth method, binding a service's ServiceAccount to its policy.
+	EnsureKubernetesRole(ctx context.Context, authMount, roleName, saNamespace, saName string, policies []string) error
 }
 
 // DBProvider provisions databases for developer applications.

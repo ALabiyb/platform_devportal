@@ -66,6 +66,8 @@ func main() {
 	securityAdapter := plugin.NewDefectDojoAdapter(cfg, httpClient)
 	gitopsAdapter := plugin.NewArgoCDAdapter(cfg, httpClient)
 	dbAdapter := plugin.NewPostgresDBAdapter(cfg)
+	vaultAdapter := plugin.NewVaultAdapter(cfg, httpClient)
+	dtAdapter := plugin.NewDependencyTrackAdapter(cfg, httpClient)
 
 	templates := tmpl.New(cfg)
 
@@ -78,7 +80,7 @@ func main() {
 	orch := provisioner.New(
 		database, hub,
 		gitAdapter, ciAdapter, registryAdapter,
-		securityAdapter, gitopsAdapter, dbAdapter,
+		securityAdapter, gitopsAdapter, dbAdapter, vaultAdapter, dtAdapter,
 		cfg, templates,
 	)
 

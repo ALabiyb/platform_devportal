@@ -249,6 +249,78 @@ func (h *HarborAdapter) EnsureRobotAccount(ctx context.Context, projectName, rob
 	return nil, nil
 }
 
+// SyncProjectMembers reconciles the Harbor project member list to the given
+// email set. Harbor usernames for Keycloak OIDC users match the email prefix
+// before '@' — users not found in Harbor are silently skipped.
+func (h *HarborAdapter) SyncProjectMembers(ctx context.Context, projectName string, emails []string) error {
+	projectName = harborProject(projectName)
+
+	// Fetch current members.
+	listURL := fmt.Sprintf("%s/api/v2.0/projects/%s/members", h.baseURL, url.PathEscape(projectName))
+	resp, err := h.do(ctx, http.MethodGet, listURL, "", nil)
+	if err != nil {
+		return fmt.Errorf("harbor SyncProjectMembers list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var members []struct {
+		ID       int    `json:"id"`
+		EntityID int    `json:"entity_id"`
+		Username string `json:"entity_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+		return fmt.Errorf("harbor SyncProjectMembers decode: %w", err)
+	}
+
+	// Build wanted set using email prefix as Harbor username.
+	wanted := make(map[string]bool, len(emails))
+	for _, e := range emails {
+		username := e
+		if idx := strings.Index(e, "@"); idx > 0 {
+			username = e[:idx]
+		}
+		wanted[username] = true
+	}
+
+	// Build current state keyed by Harbor username.
+	currentByName := make(map[string]int) // username → member entity ID for DELETE
+	for _, m := range members {
+		currentByName[m.Username] = m.ID
+	}
+
+	// Add missing members (Harbor role 2 = Developer).
+	for _, email := range emails {
+		username := email
+		if idx := strings.Index(email, "@"); idx > 0 {
+			username = email[:idx]
+		}
+		if _, exists := currentByName[username]; exists {
+			continue
+		}
+		addBody, _ := json.Marshal(map[string]any{
+			"role_id":     2,
+			"member_user": map[string]string{"username": username},
+		})
+		addResp, err := h.do(ctx, http.MethodPost, listURL, "application/json", bytes.NewReader(addBody))
+		if err == nil {
+			drain(addResp.Body)
+		}
+	}
+
+	// Remove stale members.
+	for username, memberID := range currentByName {
+		if !wanted[username] {
+			delURL := fmt.Sprintf("%s/api/v2.0/projects/%s/members/%d",
+				h.baseURL, url.PathEscape(projectName), memberID)
+			delResp, err := h.do(ctx, http.MethodDelete, delURL, "", nil)
+			if err == nil {
+				drain(delResp.Body)
+			}
+		}
+	}
+	return nil
+}
+
 // ── internal helpers ──────────────────────────────────────────────────────────
 
 type harborConflictError struct{}

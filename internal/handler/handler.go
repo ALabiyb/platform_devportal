@@ -50,6 +50,7 @@ import (
 	authpkg "github.com/ALabiyb/platform_devportal/internal/auth"
 	"github.com/ALabiyb/platform_devportal/internal/config"
 	"github.com/ALabiyb/platform_devportal/internal/db"
+	"github.com/ALabiyb/platform_devportal/internal/membersync"
 	"github.com/ALabiyb/platform_devportal/internal/plugin"
 	"github.com/ALabiyb/platform_devportal/internal/provisioner"
 )
@@ -69,6 +70,7 @@ type Handler struct {
 	hub     *provisioner.Hub
 	webFS   fs.FS
 	version string
+	syncer  *membersync.Service // nil when no platform tools configured
 
 	// per-IP rate limiting
 	mu       sync.Mutex
@@ -81,7 +83,7 @@ type visitor struct {
 }
 
 // New constructs a Handler and starts the rate-limiter cleanup goroutine.
-func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, git plugin.GitProvider, hub *provisioner.Hub, webFS fs.FS, version string) *Handler {
+func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, git plugin.GitProvider, hub *provisioner.Hub, webFS fs.FS, version string, syncer *membersync.Service) *Handler {
 	h := &Handler{
 		db:       database,
 		cfg:      cfg,
@@ -90,6 +92,7 @@ func New(database *db.DB, cfg *config.Config, authHandler *authpkg.Handler, git 
 		hub:      hub,
 		webFS:    webFS,
 		version:  version,
+		syncer:   syncer,
 		visitors: make(map[string]*visitor),
 	}
 	go h.cleanupVisitors()
@@ -132,6 +135,9 @@ func (h *Handler) Routes() http.Handler {
 
 		// ── API v1 ─────────────────────────────────────────────────────────
 		r.Route("/api/v1", func(r chi.Router) {
+
+			// dashboard summary
+			r.Get("/dashboard", h.GetDashboard)
 
 			// viewer+ — any authenticated user
 			r.Get("/projects", h.ListProjects)

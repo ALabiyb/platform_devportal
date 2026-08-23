@@ -274,6 +274,61 @@ func (d *DefectDojoAdapter) CreateEngagement(ctx context.Context, input CreateEn
 	return created.ID, nil
 }
 
+// SyncProductMembers reconciles the DefectDojo product member list to the given
+// email set. Members not in the email list are removed; missing ones are added.
+// Users not found in DefectDojo are silently skipped.
+func (d *DefectDojoAdapter) SyncProductMembers(ctx context.Context, productID int, emails []string) error {
+	// Fetch existing product members.
+	listURL := fmt.Sprintf("%s/api/v2/product_members/?product=%d&limit=200", d.baseURL, productID)
+	resp, err := d.do(ctx, http.MethodGet, listURL, "", nil)
+	if err != nil {
+		return fmt.Errorf("defectdojo SyncProductMembers list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var memberPage struct {
+		Results []struct {
+			ID   int `json:"id"`
+			User struct {
+				ID    int    `json:"id"`
+				Email string `json:"username"` // DefectDojo uses username=email for OIDC users
+			} `json:"user"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&memberPage); err != nil {
+		return fmt.Errorf("defectdojo SyncProductMembers decode: %w", err)
+	}
+
+	// Build wanted set and current state.
+	wanted := make(map[string]bool, len(emails))
+	for _, e := range emails {
+		wanted[e] = true
+	}
+	currentByEmail := make(map[string]int) // email → product_member ID
+	for _, m := range memberPage.Results {
+		currentByEmail[m.User.Email] = m.ID
+	}
+
+	// Add missing members.
+	for _, email := range emails {
+		if _, exists := currentByEmail[email]; !exists {
+			_ = d.addProductMember(ctx, productID, email)
+		}
+	}
+
+	// Remove stale members (not in wanted set).
+	for email, memberID := range currentByEmail {
+		if !wanted[email] {
+			delURL := fmt.Sprintf("%s/api/v2/product_members/%d/", d.baseURL, memberID)
+			delResp, err := d.do(ctx, http.MethodDelete, delURL, "", nil)
+			if err == nil {
+				drain(delResp.Body)
+			}
+		}
+	}
+	return nil
+}
+
 func (d *DefectDojoAdapter) do(ctx context.Context, method, rawURL, contentType string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
