@@ -15,27 +15,33 @@ This document is the authoritative design record for DevPortal, NexBridge's Inte
 1. [What is DevPortal?](#1-what-is-devportal)
 2. [Platform Stack](#2-platform-stack)
 3. [High-Level Architecture](#3-high-level-architecture)
-4. [The 15-Step Provisioning Orchestrator](#4-the-15-step-provisioning-orchestrator)
+4. [The 17-Step Provisioning Orchestrator](#4-the-17-step-provisioning-orchestrator)
 5. [Manifest Repository Structure](#5-manifest-repository-structure)
-6. [GitOps Flow — Code to Cluster](#6-gitops-flow--code-to-cluster)
-7. [Security Layers](#7-security-layers)
-8. [Service Dependency Model (Roadmap)](#8-service-dependency-model-roadmap)
-9. [Cluster Architecture](#9-cluster-architecture)
-10. [IDP Roadmap](#10-idp-roadmap)
-11. [Reference — Companies Using IDPs](#11-reference--companies-using-idps)
+6. [Custom Resources Generated Per Service](#6-custom-resources-generated-per-service)
+7. [GitOps Flow — Code to Cluster](#7-gitops-flow--code-to-cluster)
+8. [Cross-Platform Identity & Access](#8-cross-platform-identity--access)
+9. [Security Layers](#9-security-layers)
+10. [Cluster Architecture](#10-cluster-architecture)
+11. [Platform Self-Service — Branding & Multi-Tenancy](#11-platform-self-service--branding--multi-tenancy)
+12. [What's Left to Production](#12-whats-left-to-production)
+13. [Reference — Companies Using IDPs](#13-reference--companies-using-idps)
 
 ---
 
 ## 1. What is DevPortal?
 
-DevPortal is an **Internal Developer Platform (IDP)** — a self-service layer that lets a developer create a fully wired microservice in one form submission without knowing how Gitea, Jenkins, Harbor, DefectDojo, ArgoCD, or Kubernetes work.
+DevPortal is an **Internal Developer Platform (IDP)** — a self-service layer that lets a developer create a fully wired microservice in one form submission without knowing how Gitea, Jenkins, Harbor, DefectDojo, Dependency-Track, ArgoCD, Vault, or Kubernetes work underneath.
 
-The developer fills in:
-- Service name + team
-- Build tool (Maven / Go / Node.js / etc.)
-- Notification email
+The developer fills a 7-step wizard:
+1. **Identity** — service name, application, team
+2. **Build tool** — Maven / Gradle / Go / Node.js / Python / .NET / Flutter
+3. **Runtime** — port, health check paths, resource tier
+4. **Infra** — PostgreSQL / Kafka / Redis / RabbitMQ / MinIO (checkboxes)
+5. **Deps** — which other services in the application this one talks to
+6. **Review** — summary of everything about to be created
+7. **Provision** — live step-by-step progress, streamed over SSE
 
-DevPortal does the rest — 15 automated steps, live progress in the browser, no waiting for a DevOps engineer.
+DevPortal does the rest — **17 automated steps**, live progress in the browser, no waiting for a DevOps engineer.
 
 ### Why IDPs exist
 
@@ -43,11 +49,12 @@ Without an IDP, each new microservice requires a developer to:
 - Manually create a Git repo and branch protection
 - Ask DevOps to set up a Jenkins job
 - Ask DevOps to create a Harbor project and robot account
-- Register a DefectDojo product and engagement
-- Write Kubernetes manifests from scratch
-- Configure ArgoCD
+- Register a DefectDojo product and engagement, and a Dependency-Track project
+- Write Kubernetes manifests, NetworkPolicies, and operator CRs from scratch
+- Configure ArgoCD and Vault secret paths by hand
+- Manually add every teammate to five different tools
 
-This takes days and introduces inconsistency. An IDP makes it take 90 seconds and produces identical, policy-compliant infrastructure every time.
+This takes days and introduces inconsistency — every service ends up slightly different, and security controls get skipped under deadline pressure. An IDP makes it take **~90 seconds** and produces identical, policy-compliant infrastructure every time.
 
 **Companies that operate IDPs at scale:**
 - **Netflix** — internal platform called *Runway*; handles 1,000+ microservices
@@ -63,19 +70,22 @@ This takes days and introduces inconsistency. An IDP makes it take 90 seconds an
 | Layer | Tool | Role |
 |:------|:-----|:-----|
 | **Portal** | DevPortal (Go + React) | Self-service UI + provisioning orchestrator |
+| **Identity** | Keycloak | Single OIDC IdP — SSO across every tool below |
 | **SCM** | Gitea (default) / GitLab | Source code and manifest repositories |
 | **CI/CD** | Jenkins + Shared Library | Build, test, scan, sign, push, promote |
 | **Registry** | Harbor | Docker image storage + vulnerability scanning (Trivy) |
-| **Security — SAST/SCA** | DefectDojo + Dependency-Track | Centralised vulnerability management + SBOM tracking |
-| **Security — DAST** | OWASP ZAP | Dynamic application security testing on staging |
-| **GitOps** | ArgoCD | Kubernetes deployment via manifest repo sync |
-| **Workloads** | Kubernetes | Container orchestration (dev / uat / prod clusters) |
-| **Database (app)** | CloudNative PG (CNPG) | Operator-managed PostgreSQL clusters per service |
-| **Policy** | Kyverno | Admission control — blocks unsigned images, missing limits |
-| **Runtime Security** | Falco | Syscall-level anomaly detection per pod |
-| **Secrets** | HashiCorp Vault | Secret injection into pods via Vault Agent sidecar |
-| **Image Signing** | Cosign (Sigstore) | ECDSA P-256 image signatures stored in Harbor |
-| **Ingress** | Traefik / Gateway API | TLS termination + routing |
+| **Security — SAST/DAST hub** | DefectDojo | Centralised findings, SLA tracking, per-application member access |
+| **Security — SCA / SBOM** | Dependency-Track | CVE tracking on dependencies, CVE email alerts per application member |
+| **GitOps** | ArgoCD | Kubernetes deployment via manifest repo sync, per-cluster registry |
+| **Workloads** | Kubernetes | Container orchestration (dev / uat / prod clusters, one registry entry per cluster) |
+| **Database (app)** | CloudNativePG (CNPG) | Operator-managed PostgreSQL clusters per service, committed as CRs |
+| **Streaming** | Strimzi | Operator-managed Kafka topics per service |
+| **Messaging** | RabbitMQ Operator | Vhost + user CRs per service |
+| **Object storage** | MinIO | Bucket init Jobs per service |
+| **Cache** | Redis | ACL user init Jobs, key-namespace isolation per service |
+| **Secrets** | HashiCorp Vault (VSO or ESO) | KV path + policy + K8s auth role per service; VaultStaticSecret or ExternalSecret CR |
+| **Image Signing** | Cosign (Sigstore) | ECDSA signatures stored in Harbor |
+| **Ingress** | Traefik | TLS termination + routing (`*.docker.localhost` in the lab, real domains in prod) |
 
 ---
 
@@ -84,12 +94,12 @@ This takes days and introduces inconsistency. An IDP makes it take 90 seconds an
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         Developer's Browser                                 │
-│                 Fills form → watches live step progress                     │
+│                 Fills 7-step wizard → watches live step progress            │
 └───────────────────────────────┬─────────────────────────────────────────────┘
-                                │ HTTPS
+                                │ HTTPS (Keycloak SSO or local auth)
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    DevPortal (Go API + React SPA)                           │
+│                    DevPortal (Go API + React SPA, single container)         │
 │                                                                             │
 │   ┌──────────────┐   ┌───────────────┐   ┌───────────────────────────────┐ │
 │   │  React SPA   │   │  Go REST API  │   │  SSE Hub (live step stream)   │ │
@@ -107,37 +117,46 @@ This takes days and introduces inconsistency. An IDP makes it take 90 seconds an
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │              Worker Pool (embedded goroutines or standalone pod)             │
-│                     15-Step Orchestrator                                     │
+│                     17-Step Orchestrator                                     │
 │                                                                             │
-│  Steps 1-2      Steps 3-5     Steps 6-8     Steps 9-10    Steps 11-15      │
-│  DefectDojo     SCM Repo      Jenkins        Harbor        Webhook +        │
-│  product +      bootstrap +   folder +       project +     Manifest repo +  │
-│  engagement     branches +    job +          robot         ArgoCD apps      │
-│                 protection    record URL     account                        │
+│  Steps 1-2      Steps 3-5     Steps 6-8     Steps 9-11    Step 12          │
+│  DefectDojo     Gitea repo    Jenkins        Harbor +      Manifest repo    │
+│  product +      bootstrap +   folder +       webhook       + operator CRs  │
+│  engagement     branches +    job                          + NetworkPolicy │
+│                 protection                                                 │
+│                                                                             │
+│  Steps 13-15                Step 16              Step 17                   │
+│  ArgoCD apps                Vault KV path +      Dependency-Track          │
+│  dev/uat/prod                policy + K8s role    project + CVE email      │
+│  (per-cluster registry,     (VSO or ESO CR)       notification rule        │
+│   graceful skip if unset)                                                  │
 └──────┬──────────────┬──────────────┬──────────────┬──────────────┬──────────┘
        │              │              │              │              │
        ▼              ▼              ▼              ▼              ▼
   DefectDojo       Gitea          Jenkins        Harbor         ArgoCD
-  (security hub)   (SCM)          (CI/CD)        (registry)     (GitOps)
-       │                                                          │
-       ▼                                                          ▼
-  Dependency-Track                                         Kubernetes Cluster
-  (SCA / SBOM)                                             dev / uat / prod
+  Dependency-      (SCM)          (CI/CD)        (registry)     (GitOps)
+  Track                                                            │
+                                                                    ▼
+                                                          Kubernetes Cluster(s)
+                                                          dev / uat / prod
+                                                    (CNPG, Strimzi, RabbitMQ,
+                                                     MinIO, Redis, Vault/VSO)
 ```
 
 ### Component responsibilities
 
 | Component | Responsibility |
 |:----------|:--------------|
-| **Go API** | REST endpoints, authentication (local or OIDC), SSE streaming |
-| **Worker** | Claims provisioning jobs from Postgres queue, runs orchestrator |
-| **Orchestrator** | 15 deterministic steps; each step is idempotent and retryable |
-| **SSE Hub** | Broadcasts real-time step events to all browser tabs watching a project |
-| **Plugin layer** | One interface (`SCMPlugin`, `CIPlugin`, etc.) per integration — swap providers without changing orchestrator |
+| **Go API** | REST endpoints, authentication (local bcrypt or Keycloak OIDC), SSE streaming, branding config |
+| **Worker** | Claims provisioning jobs from Postgres queue (`SELECT FOR UPDATE SKIP LOCKED`), runs orchestrator |
+| **Orchestrator** | 17 deterministic steps; each step is idempotent and retryable; steps 13–16 skip gracefully when the corresponding integration is unconfigured |
+| **SSE Hub** | Broadcasts real-time step events to every browser tab watching a project |
+| **membersync.Service** | Fans out application member changes to DefectDojo, Harbor, and Dependency-Track as a background goroutine |
+| **Plugin layer** | One interface per integration (`GitProvider`, `CIProvider`, `RegistryProvider`, `SecurityProvider`, `ArgoCDProvider`, `VaultProvider`, `DependencyTrackProvider`) — swap providers without touching the orchestrator |
 
 ---
 
-## 4. The 15-Step Provisioning Orchestrator
+## 4. The 17-Step Provisioning Orchestrator
 
 Each step is **idempotent** — re-running after a failure is always safe. Steps run sequentially. The SSE hub broadcasts `running → done/failed` transitions in real time.
 
@@ -145,102 +164,102 @@ Each step is **idempotent** — re-running after a failure is always safe. Steps
 |:--|:-----|:-----|:---------------|
 | 1 | Ensure DefectDojo product | DefectDojo | Security context must exist before any code is written |
 | 2 | Create DefectDojo CI/CD engagement | DefectDojo | Engagement ID is baked into Jenkinsfile — must exist before commit |
-| 3 | Create source repository | SCM | Repo must exist before any file commits |
+| 3 | Create source repository | Gitea/GitLab | Repo must exist before any file commits |
 | 4 | Commit bootstrap files (Jenkinsfile, Dockerfile, VERSION) + create dev/uat/prod branches | SCM | Bootstrap commit must precede branch protection |
 | 5 | Protect main branch | SCM | Blocks force-pushes; CI must be green to merge |
 | 6 | Ensure Jenkins team folder | Jenkins | Folder must exist before creating a job inside it |
-| 7 | Create Jenkins multibranch pipeline job | Jenkins | Job references the repo created in step 3 |
-| 8 | Record Jenkins pipeline job URL | DevPortal DB | Stored for display and webhook use |
+| 7 | Create Jenkins multibranch pipeline job | Jenkins | Job references the repo created in step 3; triggers initial branch scan |
+| 8 | Record Jenkins pipeline job URL | DevPortal DB | Stored for display and later reference |
 | 9 | Ensure Harbor registry project | Harbor | Image project must exist before robot account |
 | 10 | Create Harbor robot account | Harbor | Robot credentials used by Jenkins to push images |
-| 11 | Configure repository webhook | SCM | Webhook added **after** Jenkins scan settles (~30s) — prevents duplicate builds |
-| 12 | Create manifest repository + commit K8s YAMLs | SCM | One repo per Application; service subdirectory per service |
-| 13 | Create ArgoCD Application — dev | ArgoCD | Points at `dev` branch of manifest repo |
-| 14 | Create ArgoCD Application — uat | ArgoCD | Points at `uat` branch of manifest repo |
-| 15 | Create ArgoCD Application — prod + databases | ArgoCD + CNPG | prod env + PostgreSQL DB provisioned with security best practices |
+| 11 | Configure repository webhook | SCM | Added **after** the Jenkins scan settles (~30s buffer from steps 9–10) — prevents duplicate builds |
+| 12 | Commit manifest repo — Kustomize overlays, operator CRs, NetworkPolicy | SCM | Renders from DB-editable templates + cluster registry + environment profiles + infra selections |
+| 13 | Create ArgoCD Application — dev | ArgoCD | Destination server resolved from the cluster registry; skipped gracefully if no ArgoCD configured |
+| 14 | Create ArgoCD Application — uat | ArgoCD | Same, `uat` environment |
+| 15 | Create ArgoCD Application — prod + `-platform` app | ArgoCD | prod env + separate ArgoCD Application syncing the `infra/` directory (CNPG, Strimzi, RabbitMQ, MinIO, Redis CRs) |
+| 16 | Configure Vault secrets path | Vault | KV path + ACL policy + K8s auth role per environment; skipped gracefully if `VAULT_URL` unset or no infra selected |
+| 17 | Register Dependency-Track project + CVE notifications | Dependency-Track | Project created; email notification rule scoped to it, addressed to every application member |
 
 ### Why webhook comes last (step 11)
 
-Jenkins performs an initial branch scan when a multibranch job is created. If the webhook is added before the scan completes, each branch push during that window triggers an additional build. By waiting (steps 9-10 add ~30s of buffer), the scan finishes before the webhook is live, ensuring exactly **one build per branch** on every push.
+Jenkins performs an initial branch scan when a multibranch job is created. If the webhook is added before the scan completes, each branch push during that window triggers an additional build. Waiting for steps 9–10 to finish (~30s of buffer) lets the scan finish before the webhook goes live, guaranteeing exactly **one build per branch** on every push.
+
+### Graceful skip design
+
+Steps 13–16 depend on infrastructure that may not exist in every deployment (a Kubernetes cluster, a Vault instance). Rather than failing the whole run, each of these steps checks its precondition first and logs a skip:
+
+```go
+if o.cfg.ArgoCDURL == "" {
+    slog.Info("provisioner: ArgoCD not configured — skipping GitOps step")
+    return nil
+}
+```
+
+This means the platform is useful in three deployment modes without any code branching:
+- **Local lab** (no cluster) — steps 1–12 and 17 run for real; 13–16 log skipped; manifests are still committed to git, ready for a cluster to sync them later
+- **Staging** (cluster, no Vault) — steps 1–15 and 17 run for real; 16 skips
+- **Production** (everything wired) — all 17 steps run for real
 
 ---
 
 ## 5. Manifest Repository Structure
 
-### Current structure (flat — per-application repo, per-service folder)
-
 ```
-<app-slug>-k8s/                    ← one repo per Application
-  <service-slug>/                  ← one folder per Service
-    namespace.yaml
-    deployment.yaml
-    service.yaml
-    ingress.yaml
-    hpa.yaml                       (prod only)
-  branches: dev | uat | prod       ← one branch per environment
-```
-
-ArgoCD Application points at `path: <service-slug>/`, `targetRevision: dev|uat|prod`.
-
-### Target structure (Kustomize base + overlays)
-
-```
-<app-slug>-k8s/
-  <service-a>/
+<app-slug>-k8s/                          ← one repo per Application
+  <service-slug>/
     base/
       kustomization.yaml
       namespace.yaml
       deployment.yaml
       service.yaml
       hpa.yaml
-      networkpolicy.yaml           ← generated from service dependency declarations
+      networkpolicy.yaml                 ← generated from infra selections + service dependencies
       configmap.yaml
     overlays/
-      dev/
-        kustomization.yaml
-        patch-replicas.yaml        (replicas: 1)
-        patch-resources.yaml       (cpu/mem from dev environment profile)
-      uat/
-        kustomization.yaml
-        patch-replicas.yaml
-      prod/
-        kustomization.yaml
-        patch-replicas.yaml        (replicas: 3+)
-        patch-resources.yaml       (cpu/mem from prod environment profile)
-  <service-b>/
-    base/ + overlays/
-  infrastructure/
-    postgres/
-      <service-a>-db.yaml          ← CNPG Cluster CR (if service selected PostgreSQL)
-      <service-b>-db.yaml
-    kafka/
-      <service-a>-topics.yaml      ← KafkaTopic CR (if service selected Kafka)
-    rabbitmq/
-      <service-a>-queues.yaml      ← RabbitmqQueue CR (if service selected RabbitMQ)
+      dev/    kustomization.yaml, patch-replicas.yaml, patch-resources.yaml
+      uat/    kustomization.yaml, patch-replicas.yaml, patch-resources.yaml
+      prod/   kustomization.yaml, patch-replicas.yaml, patch-resources.yaml
+    infra/
+      dev/    cnpg-database.yaml   kafkatopic.yaml   rabbitmq-vhost.yaml
+              rabbitmq-user.yaml   minio-job.yaml     redis-acl-job.yaml
+              vault-auth.yaml      vault-static-secret.yaml   (or external-secret.yaml)
+      uat/    (same set, uat-scoped)
+      prod/   (same set, prod-scoped)
   argocd/
-    <service-a>-dev.yaml           ← ArgoCD Application CR
-    <service-a>-uat.yaml
-    <service-a>-prod.yaml
+    <service-slug>-dev.yaml               ← ArgoCD Application (workload)
+    <service-slug>-uat.yaml
+    <service-slug>-prod.yaml
+    <service-slug>-platform-dev.yaml      ← ArgoCD Application (infra/ CRs only)
+    <service-slug>-platform-uat.yaml
+    <service-slug>-platform-prod.yaml
+  branches: dev | uat | prod              ← ArgoCD targetRevision per environment
 ```
 
-### What are Custom Resources (CRs)?
+**cpu/mem/replicas** in `patch-resources.yaml` and `patch-replicas.yaml` come from the `environment_profiles` table — set once by the platform team, applied to every service in that tier automatically.
 
-Kubernetes itself knows `Deployment`, `Service`, `Ingress`, etc. **Custom Resources** extend Kubernetes with new resource types registered by **Operators**:
-
-| Operator | Custom Resource | What Kubernetes does when you apply it |
-|:---------|:----------------|:--------------------------------------|
-| **CNPG** | `kind: Cluster` | Provisions a full PostgreSQL HA cluster |
-| **Strimzi** | `kind: KafkaTopic` | Creates/manages a Kafka topic |
-| **RabbitMQ Operator** | `kind: RabbitmqCluster` | Provisions a RabbitMQ broker |
-| **ArgoCD** | `kind: Application` | Watches a Git path and syncs it to the cluster |
-| **Kyverno** | `kind: ClusterPolicy` | Enforces admission rules on every new Pod |
-| **Vault** | `kind: VaultStaticSecret` | Injects Vault secrets as K8s Secrets |
-
-DevPortal generates these CRs as YAML files committed to the manifest repo. ArgoCD syncs them to the cluster. The operators react and do the actual work.
+Every manifest file's *content* — not just its existence — is admin-editable. `manifest_templates` in Postgres holds 19 templates (base resources, overlay patches, and every operator CR listed above). The generator merges any admin override on top of the built-in default; if no override exists, the default template renders unchanged. This means platform engineers can adjust the Deployment probe timings, add a company-wide label, or change a resource default without a code deploy.
 
 ---
 
-## 6. GitOps Flow — Code to Cluster
+## 6. Custom Resources Generated Per Service
+
+Kubernetes itself knows `Deployment`, `Service`, `Ingress`. **Custom Resources** extend it with new types registered by **Operators**. DevPortal generates these CRs as YAML in `infra/<env>/`; a dedicated `-platform` ArgoCD Application syncs them separately from the workload Application, so an operator CR change never triggers a workload restart and vice versa.
+
+| Trigger (infra checkbox) | CR generated | Operator | What happens on apply |
+|:--------------------------|:--------------|:---------|:-----------------------|
+| PostgreSQL | `kind: Database` | CNPG | Operator provisions the DB + user inside the shared CNPG cluster — no manual SQL, no plaintext password in the manifest repo |
+| Kafka | `kind: KafkaTopic` (one per declared topic) | Strimzi | Creates the topic — 3 partitions, replication factor 1, 7-day retention by default |
+| RabbitMQ | `kind: Vhost` + `kind: User` | RabbitMQ Operator | Provisions an isolated vhost and a scoped user, credentials referenced by secret name |
+| MinIO | `kind: Job` (ArgoCD sync hook) | — | Runs `mc mb --ignore-existing` against the shared MinIO tenant; `BeforeHookCreation` delete policy makes re-syncs idempotent |
+| Redis | `kind: Job` (ArgoCD sync hook) | — | Runs `ACL SETUSER <service>-<env> ... ~<service>-<env>:*` — per-service key-namespace isolation on a shared Redis instance |
+| (always, if any infra/deps declared) | `kind: NetworkPolicy` | — | Default-deny; explicit ingress/egress rules per selected infra namespace and per declared service-to-service dependency |
+| (always) | `kind: VaultAuth` + `kind: VaultStaticSecret` **or** `kind: ExternalSecret` | VSO or ESO (`VAULT_USE_VSO` toggle) | Binds the service's K8s ServiceAccount to its Vault policy; syncs the Vault KV path into a native K8s Secret the pod reads via `envFrom` |
+
+**Why CRs instead of DevPortal calling `CREATE DATABASE` directly:** the CR is declarative and lives in Git — anyone can see exactly what infrastructure a service has by reading its manifest repo, and the operator (not DevPortal) owns the actual provisioning, retries, and lifecycle. DevPortal explicitly skips its own direct SQL path (`EnsureDatabase`/`EnsureUser`) whenever CNPG is selected, to avoid racing the operator.
+
+---
+
+## 7. GitOps Flow — Code to Cluster
 
 ```
 Developer pushes code to dev branch
@@ -251,13 +270,14 @@ Gitea webhook ──────────────────────
                              ┌─────────────────┼─────────────────────┐
                              ▼                 ▼                     ▼
                          Checkout          Build & Test          Security Scan
-                         source repo       (Maven/Go/npm)        OWASP DC + SBOM
-                                               │                     │
-                                               ▼                     ▼
-                                       docker build             DefectDojo
-                                       docker push              (findings uploaded)
-                                       (Harbor)                 Dependency-Track
-                                               │                (SBOM uploaded)
+                         source repo       (per build-tool       SBOM + SAST
+                                            template)                 │
+                                               │                     ▼
+                                               ▼                 DefectDojo +
+                                       docker build             Dependency-Track
+                                       docker push               (findings + SBOM
+                                       (Harbor, Trivy scan)       uploaded)
+                                               │
                                                ▼
                                        cosign sign
                                        (Sigstore ECDSA)
@@ -272,12 +292,12 @@ Gitea webhook ──────────────────────
 ArgoCD detects manifest change
           │
           ▼
-ArgoCD syncs overlays/dev → Kubernetes
+ArgoCD syncs overlays/dev + infra/dev → Kubernetes (per cluster registry entry)
           │
           ▼
 Rolling update — zero downtime
-Kyverno validates: signed image ✓ resource limits ✓ labels ✓
-Falco watches: runtime syscalls
+NetworkPolicy already in place — pod can only reach declared dependencies
+Pod reads its secrets from the Vault-synced K8s Secret (no plaintext env vars)
 ```
 
 ### Promotion flow (dev → uat → prod)
@@ -285,250 +305,146 @@ Falco watches: runtime syscalls
 ```
 Jenkins (dev build succeeds)
     │
-    ▼  PR: merge dev manifests into uat branch
-    │  (or: Jenkins promotes image tag automatically on tag push)
+    ▼  PR: merge dev manifests into uat branch (or automated tag promotion)
     ▼
-ArgoCD syncs uat branch → uat namespace
+ArgoCD syncs uat branch → uat namespace, on the uat cluster from the registry
     │
     ▼  After UAT sign-off
     ▼  PR: merge uat manifests into prod branch
-    │
     ▼
-ArgoCD syncs prod branch → prod namespace (3 replicas + HPA)
+ArgoCD syncs prod branch → prod namespace (higher replica count + HPA from environment_profiles)
 ```
 
 ---
 
-## 7. Security Layers
+## 8. Cross-Platform Identity & Access
 
-DevPortal implements **defence in depth** — multiple overlapping security controls:
+Keycloak is the single IdP for every tool in the stack — one login, one set of groups (`devportal-admins`, `devportal-developers`), federated into Gitea, Jenkins, Harbor, DefectDojo, SonarQube, and Dependency-Track via OIDC.
+
+DevPortal's own `project_members` table is the **source of truth for application-level access**. When a lead adds or removes a member on an application in the DevPortal UI, `membersync.Service` fans that change out in the background to every other tool:
+
+```
+AddApplicationMember (DevPortal DB + Gitea group)
+          │
+          ▼  go h.syncer.SyncApplicationMembers(ctx, appID)   ← background goroutine, non-fatal errors
+          │
+   ┌──────┼──────────────────────┬──────────────────────────┐
+   ▼      ▼                      ▼                          ▼
+Gitea   DefectDojo            Harbor                 Dependency-Track
+group   SyncProductMembers    SyncProjectMembers      EnsureEmailNotification
+        (adds/removes         (adds/removes           (rewrites the CVE alert
+         product members,      project members,         rule's recipient list)
+         reconciles to          role_id: 2/Developer)
+         exact wanted set)
+```
+
+**Effect:** a developer added to an application in DevPortal automatically sees only their own products in DefectDojo, only their own projects in Harbor, and starts receiving CVE emails for their own services in Dependency-Track — without a platform engineer touching four separate admin consoles.
+
+---
+
+## 9. Security Layers
+
+DevPortal implements **defence in depth** — overlapping controls at code, build, and runtime:
 
 ```
                     Code                     Build                     Runtime
                       │                        │                          │
                       ▼                        ▼                          ▼
               ┌──────────────┐        ┌──────────────────┐       ┌──────────────────┐
-              │  DefectDojo  │        │ Dependency-Track  │       │  Falco           │
-              │  SAST/DAST   │        │  SCA / SBOM       │       │  Syscall monitor │
-              │  findings hub│        │  CVE tracking     │       │  Anomaly alerts  │
+              │  DefectDojo  │        │ Dependency-Track  │       │  NetworkPolicy   │
+              │  SAST/DAST   │        │  SCA / SBOM       │       │  zero-trust pod  │
+              │  findings hub│        │  CVE tracking     │       │  networking      │
               └──────────────┘        └──────────────────┘       └──────────────────┘
                       │                        │                          │
               ┌──────────────┐        ┌──────────────────┐       ┌──────────────────┐
-              │ Harbor Trivy │        │ Cosign signature  │       │  Kyverno policy  │
-              │ Image scan   │        │ on every image    │       │  Admission ctrl  │
-              └──────────────┘        └──────────────────┘       └──────────────────┘
-                                               │                          │
-                                      ┌──────────────────┐       ┌──────────────────┐
-                                      │ NetworkPolicy     │       │  Vault           │
-                                      │ per-service       │       │  Secret inject   │
-                                      │ (zero-trust pod   │       │  (no plaintext   │
-                                      │  networking)      │       │   env vars)      │
-                                      └──────────────────┘       └──────────────────┘
+              │ Harbor Trivy │        │ Cosign signature  │       │  Vault / VSO     │
+              │ Image scan   │        │ on every image     │       │  no plaintext    │
+              └──────────────┘        └──────────────────┘       │  secrets in pods  │
+                                                                   └──────────────────┘
 ```
 
-| Control | What it prevents |
-|:--------|:----------------|
-| **DefectDojo** | Centralised findings across SAST, DAST, dependency scans — SLA tracking |
-| **Dependency-Track** | Vulnerable open-source libraries; alerts when a new CVE hits a known dependency |
-| **Harbor + Trivy** | Vulnerable base images; blocks deployment of critical-severity images |
-| **Cosign** | Tampered images; Kyverno rejects any image not signed by NexBridge key |
-| **Kyverno** | Missing resource limits, privileged containers, missing required labels |
-| **NetworkPolicy** | Lateral movement; pod A cannot reach pod B unless explicitly declared |
-| **Vault** | Plaintext secrets in env vars; pods request secrets from Vault at startup |
-| **Falco** | Zero-day exploits and insider threats; alerts on unexpected syscalls at runtime |
+| Control | What it prevents | Status |
+|:--------|:----------------|:------:|
+| **DefectDojo** | Findings scattered across teams — centralised triage with SLA tracking, scoped per application member | ✅ built |
+| **Dependency-Track** | Silent CVE drift in dependencies — email alert the moment a new CVE hits a known library | ✅ built |
+| **Harbor + Trivy** | Vulnerable base images shipping to prod | ✅ built |
+| **Cosign** | Tampered or unauthorised images | ✅ built (signing step; admission enforcement is cluster-side Kyverno, not yet wired) |
+| **NetworkPolicy** | Lateral movement — a pod can't reach another pod unless explicitly declared as a dependency or selected infra | ✅ built, generated automatically |
+| **Vault (VSO/ESO)** | Plaintext secrets in env vars or Git — pods get secrets synced from Vault at deploy time | ✅ built |
+| **Keycloak SSO + group RBAC** | Credential sprawl, orphaned accounts across 7 tools | ✅ built |
+| **Cross-platform member sync** | Developers seeing findings/registries for services they don't own | ✅ built |
 
 ---
 
-## 8. Service Dependency Model (Roadmap)
+## 10. Cluster Architecture
 
-The next major capability: when creating a service, the developer declares what it needs. DevPortal generates everything automatically.
-
-### Dependency declaration form (planned)
-
-```
-Service: order-service
-Team: restaurant-pos
-
-Infrastructure needs:
-  [x] PostgreSQL       → CNPG Cluster CR + NetworkPolicy (service → postgres:5432)
-  [ ] Redis            → Redis CR + NetworkPolicy
-  [x] Kafka            → KafkaTopic CRs + NetworkPolicy (service → kafka-brokers:9092)
-  [ ] RabbitMQ         → RabbitmqQueue CR + NetworkPolicy
-
-This service talks to:
-  [x] inventory-service  port 8080  → NetworkPolicy (order-service → inventory-service:8080)
-  [x] auth-service       port 8080  → NetworkPolicy (order-service → auth-service:8080)
-
-Exposed via ingress: Yes
-```
-
-### What DevPortal generates from these declarations
-
-**CNPG PostgreSQL CR** (security best practice):
-```yaml
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
-metadata:
-  name: order-db
-  namespace: restaurant-pos-dev
-spec:
-  instances: 1                  # dev=1, uat=1, prod=3
-  storage:
-    size: 5Gi
-  bootstrap:
-    initdb:
-      database: order_db
-      owner: order_svc
-      secret:
-        name: order-db-credentials   # Vault-injected or Sealed Secret
-  monitoring:
-    enablePodMonitor: true
-```
-
-**NetworkPolicy** (zero-trust pod networking):
-```yaml
-# Only order-service can reach its own database
-kind: NetworkPolicy
-spec:
-  podSelector:
-    matchLabels:
-      app: order-db
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: order-service
-      ports:
-        - port: 5432
-```
-
-**Service-to-service NetworkPolicy**:
-```yaml
-# order-service is allowed to call inventory-service
-kind: NetworkPolicy
-spec:
-  podSelector:
-    matchLabels:
-      app: inventory-service
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: order-service
-      ports:
-        - port: 8080
-```
-
-### DB schema additions needed
-
-```sql
--- What infrastructure a service requires
-CREATE TABLE service_infra_requirements (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id    UUID REFERENCES projects(id) ON DELETE CASCADE,
-  infra_type    TEXT NOT NULL,   -- 'postgres' | 'redis' | 'kafka' | 'rabbitmq'
-  config        JSONB,           -- e.g. {"storage": "10Gi", "instances": 3}
-  created_at    TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Which services talk to which (drives NetworkPolicy generation)
-CREATE TABLE service_dependencies (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  from_project   UUID REFERENCES projects(id) ON DELETE CASCADE,
-  to_project     UUID REFERENCES projects(id) ON DELETE CASCADE,
-  port           INTEGER NOT NULL DEFAULT 8080,
-  protocol       TEXT DEFAULT 'TCP',
-  created_at     TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
----
-
-## 9. Cluster Architecture
-
-DevPortal registers one Kubernetes cluster per environment in the **Cluster Registry**. ArgoCD runs inside each cluster (or a central ArgoCD manages all clusters via kubeconfig).
+DevPortal registers **one Kubernetes cluster per environment** in the Cluster Registry (`clusters` + `cluster_platform_services` tables) — no more flat, single-cluster env vars. Each registry row carries the environment's ArgoCD destination server and the namespace/cluster-name of each shared platform service (CNPG cluster, Kafka broker namespace, MinIO tenant, Redis instance).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Kubernetes Cluster (dev)                           │
+│                          Kubernetes Cluster (per env, from registry)         │
 │                                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │  ArgoCD      │  │  Kyverno     │  │  Falco       │  │  Vault Agent   │  │
-│  │  (GitOps)    │  │  (policy)    │  │  (runtime)   │  │  (secrets)     │  │
+│  │  ArgoCD      │  │  Kyverno     │  │  Falco       │  │  Vault Agent / │  │
+│  │  (GitOps)    │  │  (policy —   │  │  (runtime —  │  │  VSO           │  │
+│  │              │  │   planned)   │  │   planned)   │  │  (secrets)     │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └────────────────┘  │
 │                                                                             │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │  Namespaces per service × environment                                  │ │
+│  │  Namespace per service × environment                                   │ │
 │  │  order-service-dev    payment-service-dev    auth-service-dev          │ │
 │  │                                                                        │ │
-│  │  Each namespace contains:                                              │ │
-│  │  Deployment  Service  Ingress  HPA  NetworkPolicy                      │ │
-│  │  CNPG Cluster (if postgres selected)                                   │ │
-│  │  KafkaTopic (if kafka selected)                                        │ │
+│  │  Each namespace: Deployment · Service · Ingress · HPA · NetworkPolicy  │ │
+│  │  + whichever CRs the service selected (CNPG / KafkaTopic / Vhost /     │ │
+│  │    MinIO Job / Redis Job / VaultAuth+StaticSecret)                     │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                             │
-│  CNPG Operator    Strimzi Operator    RabbitMQ Operator    Gateway API      │
-│  (watches CNPG CRs) (watches KafkaTopic) (watches RMQ CRs)                 │
+│  CNPG Operator    Strimzi Operator    RabbitMQ Operator    (shared,        │
+│  (watches CNPG CRs) (watches KafkaTopic) (watches Vhost/User)  cluster-wide)│
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### ArgoCD App-of-Apps pattern
-
-DevPortal commits ArgoCD `Application` CRs into `argocd/` folder of the manifest repo. ArgoCD's root app watches that folder and bootstraps all service apps automatically. Adding a new service → one new YAML file → ArgoCD picks it up without any manual kubectl apply.
-
-```
-argocd/
-  order-service-dev.yaml    ← ArgoCD Application: path=order-service/overlays/dev
-  order-service-uat.yaml    ← ArgoCD Application: path=order-service/overlays/uat
-  order-service-prod.yaml   ← ArgoCD Application: path=order-service/overlays/prod
-  payment-service-dev.yaml
-  ...
-```
+Adding a new cluster is a form submission in **Platform → Clusters**, not a code change — the orchestrator reads the registry at provision time and resolves the correct destination server, CNPG cluster name, and namespace conventions per environment automatically.
 
 ---
 
-## 10. IDP Roadmap
+## 11. Platform Self-Service — Branding & Multi-Tenancy
 
-### Done ✓
+The Docker image is identical for every deployment; branding is entirely runtime config, no rebuild:
 
-- [x] 15-step provisioning orchestrator
-- [x] SCM abstraction (Gitea / GitLab / GitHub-ready)
-- [x] Jenkins multibranch pipeline + shared library
-- [x] Harbor image project + robot account
-- [x] DefectDojo product + engagement (SAST/DAST hub)
-- [x] Dependency-Track SBOM upload (URL + API key credential)
-- [x] Cosign image signing + Kyverno enforcement
-- [x] ArgoCD GitOps wiring (dev / uat / prod)
-- [x] Live SSE step progress stream in browser
-- [x] Platform topology visualization on provisioning page
-- [x] Application → Service hierarchy
-- [x] Cluster registry + environment profiles
-- [x] 15 editable K8s manifest templates
-- [x] Edit & Retry on failed provisioning
-- [x] Webhook timing fix (1 build per branch per push)
+| Var | Controls |
+|-----|----------|
+| `BRAND_APP_NAME`, `BRAND_COMPANY` | Portal title and org name |
+| `BRAND_PRIMARY_HUE` | CTAs, buttons, links, focus ring |
+| `BRAND_SECONDARY_HUE` | Badges, tag chips, secondary highlights |
+| `BRAND_SURFACE_HUE` | Panel/card/border tint |
+| `BRAND_LOGO_URL` | Hosted logo image |
 
-### In Progress / Next
+`GET /branding.json` serves these values; React writes them as CSS custom properties before first paint, and every color token in the stylesheet derives from `hsl(var(--brand-hue) ...)`. This means the same binary can be deployed for multiple internal orgs or white-labelled for a customer, distinguished only by environment variables.
 
-- [ ] Kustomize base + overlays manifest structure
-- [ ] Service infrastructure dependency selection (PostgreSQL / Redis / Kafka / RabbitMQ)
-- [ ] CNPG Cluster CR generation per service that selects PostgreSQL
-- [ ] NetworkPolicy generation from service-to-service dependency declarations
-- [ ] Service dependency DB tables (`service_infra_requirements`, `service_dependencies`)
-- [ ] App-level manifest repo (ArgoCD Application CRs committed to `argocd/` folder)
-
-### Later
-
-- [ ] Falco alert → DefectDojo finding integration
-- [ ] Vault secret injection wiring (VaultAuth + VaultStaticSecret CRs)
-- [ ] SonarQube code quality gate in Jenkins pipeline
-- [ ] Multi-cluster ArgoCD (central ArgoCD managing dev + uat + prod)
-- [ ] Service catalogue UI (searchable list of all services, owners, dependencies)
-- [ ] Kafka / RabbitMQ topic and queue CR generation
-- [ ] Cost attribution per team (namespace resource usage)
+The Helm chart (`chart/`) ships with `personal` and `production` value profiles and supports both a standard Kubernetes `Ingress` and a Traefik `IngressRoute`, so the platform team itself can run DevPortal on the same Kubernetes clusters it provisions services into.
 
 ---
 
-## 11. Reference — Companies Using IDPs
+## 12. What's Left to Production
+
+Everything described above is implemented and compiles clean. What remains is **operational validation, not code**:
+
+| Gap | What's actually missing |
+|-----|--------------------------|
+| **Real Kubernetes cluster(s)** | Steps 13–16 are code-complete but currently skip gracefully — no cluster is registered yet. Registering one dev cluster proves the ArgoCD + CNPG + NetworkPolicy path end-to-end. |
+| **Real Vault instance** | Step 16's wiring (KV write, policy, K8s auth role) is done; it needs a running Vault + real secret values seeded once (DB passwords, MinIO keys) |
+| **Kyverno admission enforcement** | Cosign signing happens; nothing yet rejects an unsigned image at admission time — this is a cluster-side policy, not a DevPortal change |
+| **Falco runtime monitoring** | Not yet deployed to any cluster — operational, not code |
+| **DevPortal self-hosting** | The platform hasn't provisioned itself through its own pipeline yet (dogfooding) |
+| **SonarQube quality gate** | SonarQube runs standalone; not yet wired as a required Jenkinsfile gate |
+| **One real end-to-end test** | No service has been taken from "click Provision" through to a running, Vault-backed, NetworkPolicy-fenced pod on a real cluster yet |
+
+None of this requires new features. It requires infrastructure (a cluster, a Vault instance) and one supervised test run.
+
+---
+
+## 13. Reference — Companies Using IDPs
 
 | Company | Platform | Public resource |
 |:--------|:---------|:----------------|
@@ -548,4 +464,4 @@ argocd/
 
 ---
 
-*Last updated: 2026-08-11 — NexBridge Technologies — Labiyb M. Said*
+*Last updated: 2026-08-24 — NexBridge Technologies — Labiyb M. Said*
