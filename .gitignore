@@ -2,11 +2,15 @@
 .env
 .env.local
 .env.*.local
+cosign.key
+cosign.pub
 
 # Compiled binaries
 bin/
 *.exe
 *.test
+/devportal
+/worker
 
 # Go module cache artifacts
 vendor/
@@ -20,6 +24,7 @@ web/dist/*
 # IDE / editor state
 .idea/
 .vscode/
+*.iml
 *.swp
 *.swo
 
