@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { Layout } from "@/components/Layout";
 import { LandingPage } from "@/pages/LandingPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { SignInPage } from "@/pages/SignInPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { CreateProjectPage } from "@/pages/CreateProjectPage";
@@ -43,7 +44,7 @@ function AppRoot() {
   if (isLoading) return <Spinner />;
   if (!user) {
     if (location.pathname === "/") return <LandingPage />;
-    return <Navigate to="/" state={{ from: location }} replace />;
+    return <Navigate to="/signin" state={{ from: location }} replace />;
   }
   return <Layout />;
 }
@@ -59,6 +60,7 @@ export function Router() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/signin" element={<PublicOnlyRoute><SignInPage /></PublicOnlyRoute>} />
         <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
         <Route path="/register" element={<PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>} />
 

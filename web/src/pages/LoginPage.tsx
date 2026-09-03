@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useLocalLogin } from "@/lib/api";
+import { useLocalLogin, useSetupStatus } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
 import { useBrand } from "@/contexts/BrandContext";
 
@@ -55,7 +55,7 @@ function BrandHeader() {
 
 // ── Local mode: email + password form ────────────────────────────────────────
 
-function LocalLoginForm({ redirectTo }: { redirectTo: string }) {
+function LocalLoginForm({ redirectTo, needsSetup }: { redirectTo: string; needsSetup: boolean }) {
   const navigate = useNavigate();
   const login = useLocalLogin();
   const [email, setEmail] = useState("");
@@ -148,12 +148,14 @@ function LocalLoginForm({ redirectTo }: { redirectTo: string }) {
         )}
       </Button>
 
-      <p className="text-center text-xs text-muted-foreground">
-        No account yet?{" "}
-        <Link to="/register" className="text-primary underline-offset-4 hover:underline">
-          Create the first admin account
-        </Link>
-      </p>
+      {needsSetup && (
+        <p className="text-center text-xs text-muted-foreground">
+          No account yet?{" "}
+          <Link to="/register" className="text-primary underline-offset-4 hover:underline">
+            Create the first admin account
+          </Link>
+        </p>
+      )}
     </form>
   );
 }
@@ -184,6 +186,8 @@ function OIDCLoginButton() {
 export function LoginPage() {
   const location = useLocation();
   const brand = useBrand();
+  const { data: setup } = useSetupStatus();
+  const needsSetup = setup?.needs_setup ?? false;
   const from = (location.state as { from?: Location } | null)?.from?.pathname ?? "/";
 
   return (
@@ -203,7 +207,7 @@ export function LoginPage() {
             {brand.auth_mode === "oidc" ? (
               <OIDCLoginButton />
             ) : (
-              <LocalLoginForm redirectTo={from} />
+              <LocalLoginForm redirectTo={from} needsSetup={needsSetup} />
             )}
           </CardContent>
         </Card>

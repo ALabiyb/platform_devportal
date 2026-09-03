@@ -1,130 +1,208 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
-import { useAuditEvents } from "@/lib/api";
+import { useAuditEvents, AuditEvent } from "@/lib/api";
 
-interface AuditEvent {
-  id: string;
-  action: string;
-  resource_type: string;
-  resource_id?: string;
-  created_at: string;
-  user_id?: string;
-  detail?: Record<string, unknown>;
+type Outcome = "Allowed" | "Denied";
+
+function inferOutcome(action: string): Outcome {
+  if (/deny|denied|reject|forbidden|fail/i.test(action)) return "Denied";
+  return "Allowed";
 }
 
-const PAGE_SIZE = 10;
+function inferCategory(resourceType: string): string {
+  const m: Record<string, string> = {
+    project:      "Provisioning",
+    service:      "Provisioning",
+    application:  "Applications",
+    user:         "Users",
+    credential:   "Credentials",
+    team:         "Teams",
+    template:     "Templates",
+    cluster:      "Platform",
+    session:      "Auth",
+    auth:         "Auth",
+  };
+  return m[resourceType?.toLowerCase()] ?? resourceType ?? "General";
+}
+
+function formatAction(action: string): string {
+  return action.replace(/\./g, " › ").replace(/_/g, " ");
+}
+
+function relativeTs(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function OutcomeBadge({ outcome }: { outcome: Outcome }) {
+  if (outcome === "Denied")
+    return <span className="badge badge-failed">Denied</span>;
+  return <span className="badge badge-success">Allowed</span>;
+}
+
+function DetailPanel({ event }: { event: AuditEvent }) {
+  const detail = event.detail ?? {};
+  const keys = Object.keys(detail);
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16,
+      padding: "16px 18px", borderTop: "1px solid var(--line)",
+      background: "var(--bg)",
+    }}>
+      <div>
+        <div className="overline" style={{ marginBottom: 8 }}>Context</div>
+        <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", alignItems: "start" }}>
+          <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)" }}>id</span>
+          <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--muted)" }}>{event.id}</span>
+          {event.actor_email && <>
+            <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)" }}>actor</span>
+            <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--muted)" }}>{event.actor_email}</span>
+          </>}
+          {event.resource_id && <>
+            <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)" }}>resource_id</span>
+            <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--muted)" }}>{event.resource_id}</span>
+          </>}
+          {keys.map(k => (
+            <>
+              <span key={k + "_k"} style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)" }}>{k}</span>
+              <span key={k + "_v"} style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--muted)", wordBreak: "break-all" }}>
+                {String((detail as Record<string, unknown>)[k])}
+              </span>
+            </>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="overline" style={{ marginBottom: 8 }}>Payload</div>
+        <pre style={{
+          margin: 0, fontFamily: "JetBrains Mono,monospace", fontSize: 11,
+          color: "var(--muted)", background: "var(--panel)", padding: 12,
+          borderRadius: 7, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
+          maxHeight: 180, overflowY: "auto",
+        }}>{keys.length > 0 ? JSON.stringify(detail, null, 2) : "—"}</pre>
+      </div>
+    </div>
+  );
+}
+
+const ALL_CATEGORIES = ["Auth","Provisioning","Applications","Users","Credentials","Teams","Templates","Platform","General"];
 
 export function AuditLogPage() {
-  const { data: events, isLoading } = useAuditEvents();
-  const [actionFilter, setActionFilter] = useState("all");
-  const [page, setPage] = useState(1);
+  const { data: events = [], isLoading } = useAuditEvents();
+  const [search, setSearch] = useState("");
+  const [cat, setCat] = useState("All");
+  const [outcome, setOutcome] = useState<"All" | "Allowed" | "Denied">("All");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const rows = events as AuditEvent[] | undefined;
-
-  const allActions = rows
-    ? ["all", ...Array.from(new Set(rows.map((e) => e.action))).sort()]
-    : ["all"];
-
-  const filtered = rows
-    ? actionFilter === "all"
-      ? rows
-      : rows.filter((e) => e.action === actionFilter)
-    : [];
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  function setFilter(v: string) {
-    setActionFilter(v);
-    setPage(1);
-  }
+  const filtered = events.filter((e: AuditEvent) => {
+    const q = search.toLowerCase();
+    const matchSearch = !q
+      || e.action.toLowerCase().includes(q)
+      || (e.actor_email ?? "").toLowerCase().includes(q)
+      || e.resource_type.toLowerCase().includes(q);
+    const category = inferCategory(e.resource_type);
+    const matchCat = cat === "All" || category === cat;
+    const ev_outcome = inferOutcome(e.action);
+    const matchOutcome = outcome === "All" || ev_outcome === outcome;
+    return matchSearch && matchCat && matchOutcome;
+  });
 
   return (
-    <div className="p-8 max-w-[1000px]">
-      <h1 className="text-[24px] font-bold tracking-tight m-0 mb-1">Audit log</h1>
-      <p className="text-[13px] text-[#94a3b8] mb-5">
-        Every significant action in DevPortal, recorded and immutable.
-      </p>
-
-      <div className="flex gap-2.5 mb-4">
-        <select
-          value={actionFilter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="h-[34px] rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-2.5 text-[12px] font-[inherit] focus:outline-none"
-        >
-          {allActions.map((a) => (
-            <option key={a} value={a}>{a}</option>
-          ))}
-        </select>
+    <div style={{ padding: 28, maxWidth: 1400, display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+          <h1 className="page-h1">Audit log</h1>
+          <p className="page-sub">Immutable record of every significant platform action.</p>
+        </div>
       </div>
 
-      {isLoading ? (
-        <div className="text-[13px] text-[#64748b]">Loading audit events…</div>
-      ) : (
-        <>
-          <div className="border border-[#334155] bg-[#1e293b] rounded-[10px] overflow-hidden">
-            {/* Header */}
-            <div
-              className="grid px-4 py-2.5 text-[11px] text-[#64748b] uppercase tracking-[0.04em] border-b border-[#334155]"
-              style={{ gridTemplateColumns: "160px 1fr 1fr 120px" }}
-            >
-              <div>Time</div>
-              <div>Action</div>
-              <div>Resource</div>
-              <div>Detail</div>
-            </div>
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input className="field" style={{ maxWidth: 260 }} placeholder="Search action, actor or resource"
+          value={search} onChange={e => setSearch(e.target.value)} />
+        <select className="field" style={{ width: "auto", padding: "0 12px" }}
+          value={cat} onChange={e => setCat(e.target.value)}>
+          <option>All</option>
+          {ALL_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <div className="segmented" style={{ marginLeft: "auto" }}>
+          {(["All", "Allowed", "Denied"] as const).map(o => (
+            <button key={o} className={outcome === o ? "active" : ""} onClick={() => setOutcome(o)}>{o}</button>
+          ))}
+        </div>
+      </div>
 
-            {pageRows.length === 0 ? (
-              <div className="px-4 py-6 text-[13px] text-[#64748b]">No events found.</div>
-            ) : (
-              pageRows.map((e) => (
-                <div
-                  key={e.id}
-                  className="grid px-4 py-[11px] text-[12px] border-b border-[#334155] last:border-0"
-                  style={{ gridTemplateColumns: "160px 1fr 1fr 120px" }}
-                >
-                  <div className="text-[#94a3b8] font-mono">
-                    {new Date(e.created_at).toLocaleString()}
-                  </div>
-                  <div className="font-mono text-[#93c5fd]">{e.action}</div>
-                  <div className="text-[#cbd5e1]">
-                    {e.resource_type}
-                    {e.resource_id && (
-                      <span className="text-[#64748b] ml-1 font-mono text-[11px]">
-                        {e.resource_id.slice(0, 8)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[#64748b] font-mono text-[11px] truncate">
-                    {e.detail ? JSON.stringify(e.detail).slice(0, 40) : "—"}
-                  </div>
+      {/* Table */}
+      <div className="tbl-wrap" style={{ overflowX: "auto" }}>
+        <div className="tbl-head" style={{
+          gridTemplateColumns: "140px 170px minmax(190px,1fr) minmax(160px,1fr) 100px 130px",
+          minWidth: 900,
+        }}>
+          <div>Timestamp</div>
+          <div>Actor</div>
+          <div>Action</div>
+          <div>Resource</div>
+          <div>Outcome</div>
+          <div>Category</div>
+        </div>
+
+        {isLoading ? (
+          <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--faint)" }}>Loading events…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--faint)" }}>
+            {events.length === 0 ? "No audit events recorded yet." : "No events match these filters."}
+          </div>
+        ) : filtered.map((e: AuditEvent) => {
+          const isExpanded = expandedId === e.id;
+          const ev_outcome = inferOutcome(e.action);
+          const category = inferCategory(e.resource_type);
+          return (
+            <div key={e.id} style={{ borderBottom: "1px solid var(--line)" }}>
+              <div
+                className="tbl-row"
+                style={{
+                  gridTemplateColumns: "140px 170px minmax(190px,1fr) minmax(160px,1fr) 100px 130px",
+                  minWidth: 900, cursor: "pointer",
+                  background: isExpanded ? "var(--card)" : "",
+                }}
+                onClick={() => setExpandedId(isExpanded ? null : e.id)}
+              >
+                <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)" }}>
+                  {relativeTs(e.created_at)}
                 </div>
-              ))
-            )}
-          </div>
+                <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {e.actor_email ? e.actor_email.split("@")[0] : e.user_id ? "service-account" : "system"}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {formatAction(e.action)}
+                </div>
+                <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {e.resource_type}{e.resource_id ? `/${e.resource_id.slice(0,8)}` : ""}
+                </div>
+                <div><OutcomeBadge outcome={ev_outcome} /></div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>{category}</div>
+              </div>
+              {isExpanded && <DetailPanel event={e} />}
+            </div>
+          );
+        })}
+      </div>
 
-          <div className="flex items-center justify-end gap-3 mt-3.5">
-            <span className="text-[12px] text-[#94a3b8]">
-              Page {page} of {totalPages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="h-[30px] rounded-md border border-[#334155] bg-transparent text-[#cbd5e1] text-[12px] px-3 cursor-pointer disabled:opacity-40"
-            >
-              Prev
-            </button>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-              className="h-[30px] rounded-md border border-[#334155] bg-transparent text-[#cbd5e1] text-[12px] px-3 cursor-pointer disabled:opacity-40"
-            >
-              Next
-            </button>
-          </div>
-        </>
-      )}
+      {/* Footer */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, color: "var(--faint)" }}>
+        <span>{filtered.length} of {events.length} events</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-ghost btn-sm" disabled>← Newer</button>
+          <button className="btn btn-ghost btn-sm" disabled>Older →</button>
+        </div>
+      </div>
     </div>
   );
 }

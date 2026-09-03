@@ -1,1102 +1,585 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
-  useClusters, useCreateCluster, useUpdateCluster,
-  useClusterServices, useUpsertClusterService,
-  useManifestTemplates, useUpsertManifestTemplate,
-  useEnvironmentProfiles, useUpdateEnvironmentProfile,
+  useClusters, useCreateCluster, useEnvironmentProfiles, useUpdateEnvironmentProfile,
   useLanguageProfiles, useUpsertLanguageProfile,
-  type Cluster, type ManifestTemplate, type EnvironmentProfile, type LanguageProfile,
+  useManifestTemplates, useUpsertManifestTemplate,
+  Cluster, EnvironmentProfile, LanguageProfile, ManifestTemplate,
 } from "@/lib/api";
-import { ApiError } from "@/lib/queryClient";
 
-// ── colour helpers ─────────────────────────────────────────────────────────────
-
-const ENV_COLOUR: Record<string, string> = {
-  dev:  "#22d3ee",
-  uat:  "#fb923c",
-  prod: "#4ade80",
-};
-
-const SVC_LABELS: Record<string, { label: string; icon: string }> = {
-  cnpg:     { label: "CloudNativePG (Postgres)", icon: "🐘" },
-  kafka:    { label: "Kafka",                    icon: "⚡" },
-  minio:    { label: "MinIO (Object Storage)",   icon: "🪣" },
-  redis:    { label: "Redis",                    icon: "🔴" },
-  rabbitmq: { label: "RabbitMQ",                 icon: "🐇" },
-  vault:    { label: "HashiCorp Vault",           icon: "🔐" },
-  gateway:  { label: "Gateway API",              icon: "🌐" },
-};
-
-const ALL_SERVICE_TYPES = Object.keys(SVC_LABELS);
-
-
-const CONDITIONAL_LABELS: Record<string, string> = {
-  "":        "Always",
-  cnpg:      "PostgreSQL only",
-  kafka:     "Kafka only",
-  minio:     "MinIO only",
-  redis:     "Redis only",
-  rabbitmq:  "RabbitMQ only",
-  prod:      "Production only",
-};
-
-// ── shared sub-components ─────────────────────────────────────────────────────
-
-function SectionHeader({ title, sub }: { title: string; sub: string }) {
+// ── Generic Modal ─────────────────────────────────────────────────────────────
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="mb-6">
-      <h1 className="text-[20px] font-bold text-[#f8fafc] m-0">{title}</h1>
-      <p className="text-[13px] text-[#64748b] mt-1 m-0">{sub}</p>
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 480, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{title}</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
 
-function Badge({ label, color }: { label: string; color: string }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <span
-      className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wide"
-      style={{ background: color + "22", color }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function ErrorMsg({ msg }: { msg: string }) {
-  return msg ? <p className="text-[12px] text-[#f87171] mt-1 m-0">{msg}</p> : null;
-}
-
-function SaveOk({ msg }: { msg: string }) {
-  return msg ? <p className="text-[12px] text-[#4ade80] mt-1 m-0">{msg}</p> : null;
-}
-
-function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] font-semibold text-[#64748b] uppercase tracking-wide">{label}</label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>{label}</label>
       {children}
     </div>
   );
 }
 
-function TextInput({
-  value, onChange, placeholder, disabled,
-}: {
-  value: string; onChange: (v: string) => void; placeholder?: string; disabled?: boolean;
-}) {
-  return (
-    <input
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      disabled={disabled}
-      className="h-8 px-3 rounded-md bg-[#0f172a] border border-[#334155] text-[#e2e8f0] text-[13px] focus:outline-none focus:border-primary/60 disabled:opacity-40"
-    />
-  );
-}
+// ── Register Cluster Modal ─────────────────────────────────────────────────────
+function RegisterClusterModal({ onClose }: { onClose: () => void }) {
+  const createM = useCreateCluster();
+  const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [env, setEnv] = useState("dev");
+  const [endpoint, setEndpoint] = useState("");
+  const [error, setError] = useState("");
 
-// ── TAB 1: Clusters ───────────────────────────────────────────────────────────
-
-function ClusterCard({
-  cluster,
-  onEdit,
-  onConfigure,
-}: {
-  cluster: Cluster;
-  onEdit: (c: Cluster) => void;
-  onConfigure: (c: Cluster) => void;
-}) {
-  const color = ENV_COLOUR[cluster.environment] ?? "#94a3b8";
-  return (
-    <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-5 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge label={cluster.environment} color={color} />
-          <span className="text-[15px] font-bold text-[#f8fafc]">{cluster.display_name}</span>
-        </div>
-        <Badge
-          label={cluster.status}
-          color={cluster.status === "active" ? "#4ade80" : "#94a3b8"}
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
-        <div>
-          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">API Endpoint</p>
-          <p className="text-[12px] text-[#cbd5e1] font-mono m-0 truncate">{cluster.api_endpoint}</p>
-        </div>
-        <div>
-          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">ArgoCD</p>
-          <p className="text-[12px] text-[#cbd5e1] font-mono m-0 truncate">{cluster.argocd_url || "—"}</p>
-        </div>
-        <div>
-          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Name</p>
-          <p className="text-[12px] text-[#cbd5e1] m-0">{cluster.name}</p>
-        </div>
-        <div>
-          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Registered</p>
-          <p className="text-[12px] text-[#cbd5e1] m-0">{new Date(cluster.created_at).toLocaleDateString()}</p>
-        </div>
-      </div>
-      <div className="flex gap-2 pt-1">
-        <button
-          onClick={() => onConfigure(cluster)}
-          className="flex-1 h-8 rounded-lg bg-primary/20 border border-primary/40 text-primary text-[12px] font-medium cursor-pointer hover:bg-primary/30 transition-colors"
-        >
-          Configure Services
-        </button>
-        <button
-          onClick={() => onEdit(cluster)}
-          className="px-4 h-8 rounded-lg bg-[#0f172a] border border-[#334155] text-[#94a3b8] text-[12px] cursor-pointer hover:bg-[#334155] hover:text-[#f8fafc] transition-colors"
-        >
-          Edit
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ClusterForm({
-  initial,
-  onClose,
-}: {
-  initial?: Cluster;
-  onClose: () => void;
-}) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [displayName, setDisplayName] = useState(initial?.display_name ?? "");
-  const [environment, setEnvironment] = useState<string>(initial?.environment ?? "dev");
-  const [apiEndpoint, setApiEndpoint] = useState(initial?.api_endpoint ?? "");
-  const [argocdUrl, setArgocdUrl] = useState(initial?.argocd_url ?? "");
-  const [status, setStatus] = useState(initial?.status ?? "active");
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-
-  const create = useCreateCluster();
-  const update = useUpdateCluster(initial?.id ?? "");
-
-  async function save() {
-    setErr(""); setOk("");
-    const body = { name, display_name: displayName, environment: environment as Cluster["environment"], api_endpoint: apiEndpoint, argocd_url: argocdUrl, status };
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !endpoint.trim()) return;
+    setError("");
     try {
-      if (initial) {
-        await update.mutateAsync(body);
-      } else {
-        await create.mutateAsync(body);
-      }
-      setOk("Saved.");
-      setTimeout(onClose, 800);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Save failed.");
-    }
+      await createM.mutateAsync({ name: name.trim(), display_name: displayName.trim() || name.trim(), environment: env as "dev" | "uat" | "prod", api_endpoint: endpoint.trim(), status: "active" });
+      onClose();
+    } catch { setError("Failed to register cluster."); }
   }
 
-  const isPending = create.isPending || update.isPending;
+  return (
+    <Modal title="Register cluster" onClose={onClose}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <Field label="Cluster name (slug)">
+          <input className="field field-mono" placeholder="eu-prod-01" value={name} onChange={e => setName(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Display name">
+          <input className="field" placeholder="EU Production 01" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+        </Field>
+        <Field label="Environment">
+          <select className="field" value={env} onChange={e => setEnv(e.target.value)}>
+            <option value="dev">dev</option>
+            <option value="uat">uat</option>
+            <option value="prod">prod</option>
+          </select>
+        </Field>
+        <Field label="API endpoint">
+          <input className="field field-mono" placeholder="https://k8s.example.com:6443" value={endpoint} onChange={e => setEndpoint(e.target.value)} />
+        </Field>
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={!name.trim() || !endpoint.trim() || createM.isPending}>
+            {createM.isPending ? "Registering…" : "Register cluster"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Language Profile Modal ────────────────────────────────────────────────────
+function LangProfileModal({ profile, onClose }: { profile?: LanguageProfile; onClose: () => void }) {
+  const isEdit = !!profile;
+  const [buildTool, setBuildTool] = useState(profile?.build_tool ?? "");
+  const [displayName, setDisplayName] = useState(profile?.display_name ?? "");
+  const [liveness, setLiveness] = useState(String(profile?.liveness_delay ?? 30));
+  const [readiness, setReadiness] = useState(String(profile?.readiness_delay ?? 10));
+  const [extraEnvJson, setExtraEnvJson] = useState(
+    profile?.extra_env ? JSON.stringify(profile.extra_env, null, 2) : ""
+  );
+  const [jsonError, setJsonError] = useState("");
+  const [error, setError] = useState("");
+
+  const upsert = useUpsertLanguageProfile(isEdit ? profile!.build_tool : buildTool);
+
+  function validateJson(v: string) {
+    if (!v.trim()) { setJsonError(""); return true; }
+    try { const p = JSON.parse(v); if (typeof p !== "object" || Array.isArray(p)) throw new Error(); setJsonError(""); return true; }
+    catch { setJsonError("Must be a JSON object { \"KEY\": \"value\" }"); return false; }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!buildTool.trim()) return;
+    if (!validateJson(extraEnvJson)) return;
+    setError("");
+    let extra_env: Record<string, string> = {};
+    if (extraEnvJson.trim()) extra_env = JSON.parse(extraEnvJson);
+    try {
+      await upsert.mutateAsync({ display_name: displayName.trim() || buildTool, liveness_delay: Number(liveness), readiness_delay: Number(readiness), extra_env });
+      onClose();
+    } catch { setError("Failed to save language profile."); }
+  }
 
   return (
-    <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-6 flex flex-col gap-4 w-full max-w-lg">
-      <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-bold m-0">{initial ? "Edit Cluster" : "Register Cluster"}</h3>
-        <button onClick={onClose} className="text-[#64748b] bg-transparent border-none cursor-pointer text-lg">✕</button>
-      </div>
+    <Modal title={isEdit ? `Edit — ${profile!.build_tool}` : "New language profile"} onClose={onClose}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {!isEdit && (
+          <Field label="Build tool (slug)">
+            <input className="field field-mono" placeholder="go" value={buildTool} onChange={e => setBuildTool(e.target.value)} autoFocus />
+          </Field>
+        )}
+        <Field label="Display name">
+          <input className="field" placeholder="Go" value={displayName} onChange={e => setDisplayName(e.target.value)} autoFocus={isEdit} />
+        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Liveness delay (s)">
+            <input className="field field-mono" type="number" min={0} value={liveness} onChange={e => setLiveness(e.target.value)} />
+          </Field>
+          <Field label="Readiness delay (s)">
+            <input className="field field-mono" type="number" min={0} value={readiness} onChange={e => setReadiness(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Extra env vars (JSON)">
+          <textarea className="field field-mono" rows={4} style={{ resize: "vertical", padding: "10px 12px", lineHeight: 1.5 }}
+            placeholder={'{"JAVA_TOOL_OPTIONS": "-Xms256m"}'} value={extraEnvJson}
+            onChange={e => { setExtraEnvJson(e.target.value); validateJson(e.target.value); }} />
+          {jsonError && <span style={{ fontSize: 11.5, color: "var(--bad)" }}>{jsonError}</span>}
+        </Field>
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={!buildTool.trim() || upsert.isPending}>
+            {upsert.isPending ? "Saving…" : "Save profile"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
-      <div className="grid grid-cols-2 gap-3">
-        <FieldRow label="Environment">
-          {initial ? (
-            <div className="h-8 px-3 flex items-center rounded-md bg-[#0f172a] border border-[#334155] text-[#64748b] text-[13px]">
-              {environment}
+// ── Manifest Template Modal ───────────────────────────────────────────────────
+function ManifestTemplateModal({ template, onClose }: { template?: ManifestTemplate; onClose: () => void }) {
+  const isEdit = !!template;
+  const [name, setName] = useState(template?.name ?? "");
+  const [displayName, setDisplayName] = useState(template?.display_name ?? "");
+  const [conditional, setConditional] = useState(template?.conditional ?? "");
+  const [content, setContent] = useState(template?.content ?? "");
+  const [error, setError] = useState("");
+
+  const upsert = useUpsertManifestTemplate(isEdit ? template!.name : name);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !content.trim()) return;
+    setError("");
+    try {
+      await upsert.mutateAsync({ display_name: displayName.trim() || name, conditional: conditional.trim(), content });
+      onClose();
+    } catch { setError("Failed to save template."); }
+  }
+
+  return (
+    <Modal title={isEdit ? `Edit — ${template!.display_name || template!.name}` : "New manifest template"} onClose={onClose}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {!isEdit && (
+          <Field label="Name (slug)">
+            <input className="field field-mono" placeholder="hpa" value={name} onChange={e => setName(e.target.value)} autoFocus />
+          </Field>
+        )}
+        <Field label="Display name">
+          <input className="field" placeholder="Horizontal Pod Autoscaler" value={displayName} onChange={e => setDisplayName(e.target.value)} autoFocus={isEdit} />
+        </Field>
+        <Field label="Conditional (optional)">
+          <input className="field field-mono" placeholder=".hpa_enabled" value={conditional} onChange={e => setConditional(e.target.value)} />
+        </Field>
+        <Field label="Content (YAML / Go template)">
+          <textarea className="field field-mono" rows={10} style={{ resize: "vertical", padding: "10px 12px", lineHeight: 1.5, fontSize: 12 }}
+            placeholder={"apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\n..."}
+            value={content} onChange={e => setContent(e.target.value)} />
+        </Field>
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={!name.trim() || !content.trim() || upsert.isPending}>
+            {upsert.isPending ? "Saving…" : "Save template"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Env Profile Edit Modal ────────────────────────────────────────────────────
+function EnvProfileEditModal({ profile, onClose }: { profile: EnvironmentProfile; onClose: () => void }) {
+  const update = useUpdateEnvironmentProfile(profile.name);
+  const [cpuReq, setCpuReq] = useState(profile.cpu_request);
+  const [memReq, setMemReq] = useState(profile.mem_request);
+  const [cpuLim, setCpuLim] = useState(profile.cpu_limit);
+  const [memLim, setMemLim] = useState(profile.mem_limit);
+  const [replicas, setReplicas] = useState(String(profile.replicas));
+  const [storageClass, setStorageClass] = useState(profile.storage_class ?? "");
+  const [hpaEnabled, setHpaEnabled] = useState(profile.hpa_enabled);
+  const [hpaMin, setHpaMin] = useState(String(profile.hpa_min));
+  const [hpaMax, setHpaMax] = useState(String(profile.hpa_max));
+  const [cpuThreshold, setCpuThreshold] = useState(String(profile.cpu_threshold));
+  const [memThreshold, setMemThreshold] = useState(String(profile.mem_threshold));
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await update.mutateAsync({
+        cpu_request: cpuReq.trim(), mem_request: memReq.trim(),
+        cpu_limit: cpuLim.trim(), mem_limit: memLim.trim(),
+        replicas: Number(replicas), storage_class: storageClass.trim(),
+        hpa_enabled: hpaEnabled,
+        hpa_min: Number(hpaMin), hpa_max: Number(hpaMax),
+        cpu_threshold: Number(cpuThreshold), mem_threshold: Number(memThreshold),
+      });
+      onClose();
+    } catch { setError("Failed to update profile."); }
+  }
+
+  const envBadgeColor = profile.name === "prod" ? "var(--bad)" : profile.name === "uat" ? "var(--warn)" : "var(--ok)";
+
+  return (
+    <Modal title={`Edit profile — ${profile.name}`} onClose={onClose}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: "6px 10px", background: "var(--bg)", borderRadius: 6, fontSize: 12, color: "var(--muted)", borderLeft: `3px solid ${envBadgeColor}` }}>
+          Resource requests are guaranteed capacity. Limits are the hard ceiling. HPA scales replicas automatically based on CPU/memory thresholds.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="CPU request"><input className="field field-mono" placeholder="250m" value={cpuReq} onChange={e => setCpuReq(e.target.value)} /></Field>
+          <Field label="CPU limit"><input className="field field-mono" placeholder="1000m" value={cpuLim} onChange={e => setCpuLim(e.target.value)} /></Field>
+          <Field label="Mem request"><input className="field field-mono" placeholder="256Mi" value={memReq} onChange={e => setMemReq(e.target.value)} /></Field>
+          <Field label="Mem limit"><input className="field field-mono" placeholder="1Gi" value={memLim} onChange={e => setMemLim(e.target.value)} /></Field>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Replicas (base)"><input className="field field-mono" type="number" min={1} value={replicas} onChange={e => setReplicas(e.target.value)} /></Field>
+          <Field label="Storage class"><input className="field field-mono" placeholder="standard" value={storageClass} onChange={e => setStorageClass(e.target.value)} /></Field>
+        </div>
+        <Field label="HPA (autoscaling)">
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+            <input type="checkbox" checked={hpaEnabled} onChange={e => setHpaEnabled(e.target.checked)} style={{ accentColor: "#0ea5e9", width: 15, height: 15 }} />
+            Enable Horizontal Pod Autoscaler
+          </label>
+        </Field>
+        {hpaEnabled && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+            <Field label="Min replicas"><input className="field field-mono" type="number" min={1} value={hpaMin} onChange={e => setHpaMin(e.target.value)} /></Field>
+            <Field label="Max replicas"><input className="field field-mono" type="number" min={1} value={hpaMax} onChange={e => setHpaMax(e.target.value)} /></Field>
+            <Field label="CPU threshold %"><input className="field field-mono" type="number" min={1} max={100} value={cpuThreshold} onChange={e => setCpuThreshold(e.target.value)} /></Field>
+            <Field label="Mem threshold %"><input className="field field-mono" type="number" min={1} max={100} value={memThreshold} onChange={e => setMemThreshold(e.target.value)} /></Field>
+          </div>
+        )}
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={update.isPending}>
+            {update.isPending ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Clusters tab ──────────────────────────────────────────────────────────────
+function clusterStatusBadge(s: string) {
+  if (s === "active" || s === "healthy") return <span className="badge badge-success">Healthy</span>;
+  if (s === "degraded") return <span className="badge badge-warn">Degraded</span>;
+  if (s === "standby")  return <span className="badge badge-pending">Standby</span>;
+  return <span className="badge badge-pending">{s}</span>;
+}
+
+function ClustersTab({ onRegister }: { onRegister: () => void }) {
+  const { data: clusters = [], isLoading } = useClusters();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="tbl-wrap">
+        <div className="tbl-head" style={{ gridTemplateColumns: "minmax(0,1.3fr) 100px minmax(200px,1fr) 130px" }}>
+          <div>Cluster</div><div>Environment</div><div>API Endpoint</div><div>Status</div>
+        </div>
+        {isLoading ? (
+          <div style={{ padding: "20px 18px", fontSize: 13, color: "var(--faint)" }}>Loading clusters…</div>
+        ) : clusters.length === 0 ? (
+          <div style={{ padding: "32px 18px", textAlign: "center" }}>
+            <div style={{ fontSize: 13, color: "var(--faint)", marginBottom: 10 }}>No clusters registered.</div>
+            <button className="btn btn-primary btn-sm" onClick={onRegister}>Register your first cluster</button>
+          </div>
+        ) : clusters.map((c: Cluster) => (
+          <div key={c.id} className="tbl-row" style={{ gridTemplateColumns: "minmax(0,1.3fr) 100px minmax(200px,1fr) 130px" }}>
+            <div>
+              <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>
+                {c.display_name || c.name}
+              </div>
+              <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--faint)", marginTop: 2 }}>{c.name}</div>
             </div>
-          ) : (
-            <select
-              value={environment}
-              onChange={(e) => setEnvironment(e.target.value)}
-              className="h-8 px-2 rounded-md bg-[#0f172a] border border-[#334155] text-[#e2e8f0] text-[13px] focus:outline-none"
-            >
-              <option value="dev">dev</option>
-              <option value="uat">uat</option>
-              <option value="prod">prod</option>
-            </select>
-          )}
-        </FieldRow>
-        <FieldRow label="Status">
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="h-8 px-2 rounded-md bg-[#0f172a] border border-[#334155] text-[#e2e8f0] text-[13px] focus:outline-none"
-          >
-            <option value="active">active</option>
-            <option value="inactive">inactive</option>
-          </select>
-        </FieldRow>
-        <FieldRow label="Slug name">
-          <TextInput value={name} onChange={setName} placeholder="dev-cluster" />
-        </FieldRow>
-        <FieldRow label="Display name">
-          <TextInput value={displayName} onChange={setDisplayName} placeholder="Development Cluster" />
-        </FieldRow>
-      </div>
-      <FieldRow label="K8s API endpoint">
-        <TextInput value={apiEndpoint} onChange={setApiEndpoint} placeholder="https://192.168.200.10:6443" />
-      </FieldRow>
-      <FieldRow label="ArgoCD URL">
-        <TextInput value={argocdUrl} onChange={setArgocdUrl} placeholder="https://argocd.dev.example.com" />
-      </FieldRow>
-
-      <ErrorMsg msg={err} />
-      <SaveOk msg={ok} />
-
-      <div className="flex gap-2 justify-end pt-1">
-        <button
-          onClick={onClose}
-          className="h-8 px-4 rounded border border-[#334155] bg-transparent text-[#94a3b8] text-[12px] cursor-pointer"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={save}
-          disabled={isPending}
-          className="h-8 px-5 rounded bg-primary border-none text-white text-[12px] font-medium cursor-pointer disabled:opacity-50"
-        >
-          {isPending ? "Saving…" : "Save"}
-        </button>
+            <div>
+              <span style={{
+                padding: "1px 7px", borderRadius: 5, fontSize: 10.5, fontWeight: 600,
+                background: c.environment === "prod" ? "var(--bad-soft)" : c.environment === "uat" ? "var(--warn-soft)" : "var(--ok-soft)",
+                color: c.environment === "prod" ? "var(--bad)" : c.environment === "uat" ? "var(--warn)" : "var(--ok)",
+              }}>{c.environment}</span>
+            </div>
+            <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {c.api_endpoint}
+            </div>
+            <div>{clusterStatusBadge(c.status)}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// Service config field map — which text fields to show per service type
-const SVC_FIELDS: Record<string, string[]> = {
-  cnpg:     ["cluster_name", "namespace", "superuser_secret"],
-  kafka:    ["brokers", "admin_secret_ref", "admin_secret_namespace"],
-  minio:    ["endpoint", "admin_secret_ref", "admin_secret_namespace"],
-  redis:    ["host", "port", "secret_ref", "secret_namespace"],
-  rabbitmq: ["host", "port", "secret_ref", "secret_namespace"],
-  vault:    ["addr", "mount", "auth_mount", "namespace"],
-  gateway:  ["name", "namespace", "section_name", "tls_secret", "domain"],
+// ── Environment Profiles tab ──────────────────────────────────────────────────
+function EnvProfilesTab() {
+  const { data: profiles = [], isLoading } = useEnvironmentProfiles();
+  const [editProfile, setEditProfile] = useState<EnvironmentProfile | null>(null);
+
+  return (
+    <div>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 14, lineHeight: 1.6 }}>
+        Environment profiles set the CPU / memory and scaling defaults that services inherit at deploy time.
+        There is one profile per environment (<strong>dev</strong>, <strong>uat</strong>, <strong>prod</strong>).
+        Click <strong>Edit</strong> on a row to adjust resource limits or enable HPA.
+      </p>
+      <div className="tbl-wrap">
+        <div className="tbl-head" style={{ gridTemplateColumns: "minmax(0,1fr) 100px 100px 100px 100px 120px 80px 80px" }}>
+          <div>Profile</div><div>CPU req</div><div>CPU lim</div><div>Mem req</div><div>Mem lim</div><div>Replicas</div><div>HPA</div><div></div>
+        </div>
+        {isLoading ? (
+          <div style={{ padding: "20px 18px", fontSize: 13, color: "var(--faint)" }}>Loading profiles…</div>
+        ) : profiles.length === 0 ? (
+          <div style={{ padding: "20px 18px", fontSize: 13, color: "var(--faint)" }}>No environment profiles configured.</div>
+        ) : profiles.map((p: EnvironmentProfile) => (
+          <div key={p.name} className="tbl-row" style={{ gridTemplateColumns: "minmax(0,1fr) 100px 100px 100px 100px 120px 80px 80px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>{p.name}</span>
+              <span style={{
+                padding: "1px 7px", borderRadius: 5, fontSize: 10.5, fontWeight: 600,
+                background: p.name === "prod" ? "var(--bad-soft)" : p.name === "uat" ? "var(--warn-soft)" : "var(--ok-soft)",
+                color: p.name === "prod" ? "var(--bad)" : p.name === "uat" ? "var(--warn)" : "var(--ok)",
+              }}>{p.name}</span>
+            </div>
+            {[p.cpu_request, p.cpu_limit, p.mem_request, p.mem_limit].map((v, i) => (
+              <div key={i} style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--muted)" }}>{v || "—"}</div>
+            ))}
+            <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--muted)" }}>
+              {p.hpa_enabled ? `${p.hpa_min}–${p.hpa_max}` : p.replicas}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              {p.hpa_enabled ? <span style={{ color: "var(--ok)", fontFamily: "JetBrains Mono,monospace", fontSize: 11.5 }}>{p.cpu_threshold}% cpu</span> : <span style={{ color: "var(--faint)" }}>off</span>}
+            </div>
+            <div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setEditProfile(p)}>Edit</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {editProfile && <EnvProfileEditModal profile={editProfile} onClose={() => setEditProfile(null)} />}
+    </div>
+  );
+}
+
+// ── Language Profiles tab ─────────────────────────────────────────────────────
+const LANG_COLOR: Record<string, string> = {
+  maven: "#f87171", gradle: "#4ade80", go: "#38bdf8",
+  node: "#fbbf24", npm: "#fbbf24", python: "#c084fc", pip: "#c084fc",
 };
 
-function ServiceConfigPanel({
-  cluster,
-  onClose,
-}: {
-  cluster: Cluster;
-  onClose: () => void;
-}) {
-  const { data: svcs, isLoading } = useClusterServices(cluster.id);
-  const [selected, setSelected] = useState<string>(ALL_SERVICE_TYPES[0]);
-  const [enabled, setEnabled] = useState(false);
-  const [fields, setFields] = useState<Record<string, string>>({});
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-  const upsert = useUpsertClusterService(cluster.id, selected);
-
-  // When selected service changes or data loads, populate form from existing config
-  function loadService(type: string) {
-    setSelected(type);
-    setErr(""); setOk("");
-    const existing = (svcs ?? []).find((s) => s.service_type === type);
-    if (existing) {
-      setEnabled(existing.enabled);
-      setFields(existing.config as Record<string, string>);
-    } else {
-      setEnabled(false);
-      setFields({});
-    }
-  }
-
-  async function save() {
-    setErr(""); setOk("");
-    try {
-      await upsert.mutateAsync({ enabled, config: fields });
-      setOk("Saved.");
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Save failed.");
-    }
-  }
-
-  const fieldNames = SVC_FIELDS[selected] ?? [];
-  const color = ENV_COLOUR[cluster.environment] ?? "#94a3b8";
+function LangProfilesTab({ onNew }: { onNew: () => void }) {
+  const { data: profiles = [], isLoading } = useLanguageProfiles();
+  const [editProfile, setEditProfile] = useState<LanguageProfile | null>(null);
 
   return (
-    <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-6 flex flex-col gap-4 w-full max-w-2xl">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge label={cluster.environment} color={color} />
-          <h3 className="text-[15px] font-bold m-0">Platform Services — {cluster.display_name}</h3>
-        </div>
-        <button onClick={onClose} className="text-[#64748b] bg-transparent border-none cursor-pointer text-lg">✕</button>
-      </div>
-
-      {isLoading ? (
-        <p className="text-[13px] text-[#64748b]">Loading…</p>
-      ) : (
-        <div className="flex gap-4 flex-1">
-          {/* Service list */}
-          <div className="w-48 flex flex-col gap-0.5">
-            {ALL_SERVICE_TYPES.map((type) => {
-              const existing = (svcs ?? []).find((s) => s.service_type === type);
-              const { icon } = SVC_LABELS[type];
-              return (
-                <button
-                  key={type}
-                  onClick={() => loadService(type)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] border-none cursor-pointer transition-colors text-left ${
-                    selected === type
-                      ? "bg-primary/20 text-primary"
-                      : "bg-transparent text-[#94a3b8] hover:bg-[#0f172a] hover:text-[#f8fafc]"
-                  }`}
-                >
-                  <span>{icon}</span>
-                  <span className="flex-1 truncate">{type}</span>
-                  {existing?.enabled && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80] shrink-0" />
-                  )}
-                </button>
-              );
-            })}
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px,1fr))", gap: 14 }}>
+        {isLoading && (
+          <div style={{ gridColumn: "1/-1", padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>
+            Loading language profiles…
           </div>
-
-          {/* Config form */}
-          <div className="flex-1 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[14px] font-semibold m-0">
-                  {SVC_LABELS[selected].icon} {SVC_LABELS[selected].label}
-                </p>
-                <p className="text-[11px] text-[#475569] m-0">
-                  Configure the connection details for this service on {cluster.display_name}.
-                </p>
-              </div>
-              {/* Toggle */}
-              <button
-                onClick={() => setEnabled((v) => !v)}
-                className={`relative w-10 h-5 rounded-full border-none cursor-pointer transition-colors ${
-                  enabled ? "bg-primary" : "bg-[#334155]"
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
-                    enabled ? "left-5" : "left-0.5"
-                  }`}
-                />
-              </button>
-            </div>
-
-            {fieldNames.map((field) => (
-              <FieldRow key={field} label={field.replace(/_/g, " ")}>
-                <TextInput
-                  value={fields[field] ?? ""}
-                  onChange={(v) => setFields((prev) => ({ ...prev, [field]: v }))}
-                  placeholder={field}
-                />
-              </FieldRow>
-            ))}
-
-            <ErrorMsg msg={err} />
-            <SaveOk msg={ok} />
-
-            <div className="flex justify-end pt-1">
-              <button
-                onClick={save}
-                disabled={upsert.isPending}
-                className="h-8 px-5 rounded bg-primary border-none text-white text-[12px] font-medium cursor-pointer disabled:opacity-50"
-              >
-                {upsert.isPending ? "Saving…" : "Save service config"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ClustersTab() {
-  const { data: clusters, isLoading } = useClusters();
-  const [showForm, setShowForm] = useState(false);
-  const [editCluster, setEditCluster] = useState<Cluster | null>(null);
-  const [configCluster, setConfigCluster] = useState<Cluster | null>(null);
-
-  const envOrder: Array<"dev" | "uat" | "prod"> = ["dev", "uat", "prod"];
-  const sorted = [...(clusters ?? [])].sort(
-    (a, b) => envOrder.indexOf(a.environment) - envOrder.indexOf(b.environment),
-  );
-  const registeredEnvs = new Set(sorted.map((c) => c.environment));
-  const missing = envOrder.filter((e) => !registeredEnvs.has(e));
-
-  if (configCluster) {
-    return (
-      <div>
-        <button
-          onClick={() => setConfigCluster(null)}
-          className="mb-4 text-[12px] text-[#64748b] bg-transparent border-none cursor-pointer hover:text-[#f8fafc] flex items-center gap-1"
-        >
-          ← Back to clusters
-        </button>
-        <ServiceConfigPanel cluster={configCluster} onClose={() => setConfigCluster(null)} />
-      </div>
-    );
-  }
-
-  if (editCluster || showForm) {
-    return (
-      <div>
-        <button
-          onClick={() => { setShowForm(false); setEditCluster(null); }}
-          className="mb-4 text-[12px] text-[#64748b] bg-transparent border-none cursor-pointer hover:text-[#f8fafc] flex items-center gap-1"
-        >
-          ← Back to clusters
-        </button>
-        <ClusterForm
-          initial={editCluster ?? undefined}
-          onClose={() => { setShowForm(false); setEditCluster(null); }}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <div className="flex items-start justify-between mb-6">
-        <SectionHeader
-          title="Cluster Registry"
-          sub="Register one Kubernetes cluster per environment. DevPortal reads these at provisioning time to know where to create ArgoCD Applications."
-        />
-        {missing.length > 0 && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="h-9 px-4 rounded-lg bg-primary border-none text-white text-[13px] font-medium cursor-pointer hover:opacity-90 shrink-0"
-          >
-            + Register Cluster
-          </button>
         )}
-      </div>
-
-      {isLoading ? (
-        <p className="text-[13px] text-[#64748b]">Loading clusters…</p>
-      ) : (
-        <>
-          <div className="grid grid-cols-3 gap-4">
-            {sorted.map((c) => (
-              <ClusterCard
-                key={c.id}
-                cluster={c}
-                onEdit={(cl) => { setEditCluster(cl); setShowForm(false); }}
-                onConfigure={(cl) => setConfigCluster(cl)}
-              />
-            ))}
-            {/* Empty slots for unregistered environments */}
-            {missing.map((env) => (
-              <div
-                key={env}
-                className="bg-[#0f172a] border border-dashed border-[#334155] rounded-xl p-5 flex flex-col items-center justify-center gap-2 min-h-[180px] cursor-pointer hover:border-primary/50 transition-colors"
-                onClick={() => setShowForm(true)}
-              >
-                <Badge label={env} color={ENV_COLOUR[env]} />
-                <p className="text-[13px] text-[#475569] m-0">No cluster registered</p>
-                <p className="text-[12px] text-primary m-0">+ Register</p>
-              </div>
-            ))}
+        {profiles.length === 0 && !isLoading && (
+          <div style={{ gridColumn: "1/-1", padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>
+            No language profiles configured yet.
+            <br />
+            <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={onNew}>Create first profile</button>
           </div>
-
-          {missing.length === 0 && (
-            <div className="mt-4">
-              <button
-                onClick={() => setShowForm(true)}
-                className="text-[12px] text-[#64748b] bg-transparent border-none cursor-pointer hover:text-[#f8fafc]"
-              >
-                + Register additional cluster
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── TAB 2: Manifest Templates ─────────────────────────────────────────────────
-
-function ManifestTemplatesTab() {
-  const { data: templates, isLoading } = useManifestTemplates();
-  const [selected, setSelected] = useState<ManifestTemplate | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [draftDisplayName, setDraftDisplayName] = useState("");
-  const [draftConditional, setDraftConditional] = useState("");
-  const [isNew, setIsNew] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-
-  const upsert = useUpsertManifestTemplate(isNew ? newName : selected?.name ?? "");
-
-  function openTemplate(t: ManifestTemplate) {
-    setSelected(t); setEditing(false); setDraft(""); setIsNew(false);
-    setErr(""); setOk("");
-  }
-
-  function startEdit() {
-    setDraft(selected?.content ?? "");
-    setDraftDisplayName(selected?.display_name ?? "");
-    setDraftConditional(selected?.conditional ?? "");
-    setEditing(true); setErr(""); setOk("");
-  }
-
-  function startNew() {
-    setSelected(null); setEditing(true); setIsNew(true);
-    setDraft(""); setDraftDisplayName(""); setDraftConditional("");
-    setNewName(""); setErr(""); setOk("");
-  }
-
-  async function save() {
-    setErr(""); setOk("");
-    try {
-      const saved = await upsert.mutateAsync({
-        display_name: draftDisplayName || (isNew ? newName : selected?.display_name),
-        conditional: draftConditional,
-        content: draft,
-      });
-      setOk("Template saved.");
-      setEditing(false); setIsNew(false);
-      setSelected(saved);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Save failed.");
-    }
-  }
-
-  return (
-    <div className="flex gap-6 h-[calc(100vh-220px)]">
-      {/* Template list */}
-      <aside className="w-52 flex-shrink-0 flex flex-col gap-1 overflow-y-auto">
-        <p className="text-[11px] text-[#475569] font-semibold uppercase tracking-widest mb-2">Templates</p>
-        {isLoading ? (
-          <p className="text-[12px] text-[#64748b]">Loading…</p>
-        ) : (
-          (templates ?? []).map((t) => (
-            <button
-              key={t.name}
-              onClick={() => openTemplate(t)}
-              className={`text-left px-3 py-2 rounded-lg text-[12px] border-none cursor-pointer transition-colors ${
-                selected?.name === t.name && !isNew
-                  ? "bg-primary/20 text-primary"
-                  : "bg-transparent text-[#94a3b8] hover:bg-[#1e293b] hover:text-[#f8fafc]"
-              }`}
-            >
-              <span className="font-mono">{t.name}</span>
-              {t.conditional && (
-                <span className="ml-1 text-[10px] text-[#475569]">({t.conditional})</span>
-              )}
-            </button>
-          ))
         )}
-        <button
-          onClick={startNew}
-          className={`mt-1 text-left px-3 py-2 rounded-lg text-[12px] border-none cursor-pointer transition-colors ${
-            isNew ? "bg-primary/20 text-primary" : "bg-transparent text-[#4ade80]/70 hover:bg-[#1e293b]"
-          }`}
-        >
-          + New template
-        </button>
-      </aside>
-
-      {/* Editor */}
-      {(selected || isNew) ? (
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex items-center gap-4 mb-3">
-            {isNew ? (
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] text-[#64748b]">Name:</span>
-                <input
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="14-cnpg-database"
-                  className="h-7 px-2 rounded bg-[#0f172a] border border-[#334155] text-[#e2e8f0] text-[12px] font-mono focus:outline-none focus:border-primary/60 w-44"
-                />
+        {profiles.map((p: LanguageProfile) => {
+          const color = LANG_COLOR[p.build_tool] ?? "#64748b";
+          const envEntries = Object.entries(p.extra_env ?? {});
+          return (
+            <div key={p.build_tool} className="card" style={{ padding: 0 }}>
+              <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12, fontWeight: 600, color, marginBottom: 4 }}>{p.build_tool}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{p.display_name || p.build_tool}</div>
+                </div>
+                <button className="btn btn-secondary btn-sm" onClick={() => setEditProfile(p)}>Edit</button>
               </div>
-            ) : (
-              <h2 className="text-[15px] font-bold m-0 font-mono">{selected?.name}</h2>
-            )}
-
-            {editing && (
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-[#64748b]">Condition:</span>
-                <select
-                  value={draftConditional}
-                  onChange={(e) => setDraftConditional(e.target.value)}
-                  className="h-7 px-2 rounded bg-[#0f172a] border border-[#334155] text-[#e2e8f0] text-[12px] focus:outline-none"
-                >
-                  {Object.entries(CONDITIONAL_LABELS).map(([val, label]) => (
-                    <option key={val} value={val}>{label}</option>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--line)" }}>
+                <div className="overline" style={{ marginBottom: 8 }}>Probe timing</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
+                  {[["Liveness delay", `${p.liveness_delay}s`], ["Readiness delay", `${p.readiness_delay}s`]].map(([k, v]) => (
+                    <div key={k}>
+                      <div style={{ fontSize: 11, color: "var(--faint)", marginBottom: 3 }}>{k}</div>
+                      <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 13, color: "var(--text)" }}>{v}</div>
+                    </div>
                   ))}
-                </select>
+                </div>
               </div>
-            )}
-
-            {!isNew && !editing && selected?.conditional && (
-              <span className="text-[11px] bg-[#0f172a] border border-[#334155] px-2 py-0.5 rounded text-[#64748b]">
-                {CONDITIONAL_LABELS[selected.conditional] ?? selected.conditional}
-              </span>
-            )}
-
-            <div className="ml-auto flex items-center gap-2">
-              {!isNew && !editing && selected?.updated_at && (
-                <span className="text-[11px] text-[#475569]">
-                  Updated {new Date(selected.updated_at).toLocaleDateString()}
-                </span>
-              )}
-              {editing ? (
-                <>
-                  <button
-                    onClick={() => { setEditing(false); setIsNew(false); setErr(""); }}
-                    className="h-8 px-3 rounded border border-[#334155] bg-transparent text-[#94a3b8] text-[12px] cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={save}
-                    disabled={upsert.isPending}
-                    className="h-8 px-4 rounded bg-primary border-none text-white text-[12px] font-medium cursor-pointer disabled:opacity-50"
-                  >
-                    {upsert.isPending ? "Saving…" : "Save"}
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={startEdit}
-                  className="h-8 px-4 rounded bg-[#1e3a5f] border border-[#334155] text-[#93c5fd] text-[12px] cursor-pointer hover:bg-[#1e293b]"
-                >
-                  Edit
-                </button>
-              )}
-            </div>
-          </div>
-
-          <ErrorMsg msg={err} />
-          <SaveOk msg={ok} />
-
-          <textarea
-            readOnly={!editing}
-            value={editing ? draft : (selected?.content ?? "")}
-            onChange={(e) => setDraft(e.target.value)}
-            spellCheck={false}
-            placeholder={editing ? "# Paste your Kubernetes YAML template here\n# Use %%%APP_NAME%%%, %%%NAMESPACE%%%, %%%IMAGE%%%, etc." : ""}
-            className="flex-1 font-mono text-[12px] text-[#e2e8f0] bg-[#0f172a] border border-[#334155] rounded-lg p-4 resize-none focus:outline-none focus:border-primary/60 mt-2"
-            style={{ lineHeight: "1.6" }}
-          />
-        </div>
-      ) : (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
-          <p className="text-[13px] text-[#475569] m-0">Select a template to view or edit its YAML content.</p>
-          <p className="text-[12px] text-[#334155] m-0 max-w-xs">
-            Templates use <code className="bg-[#1e293b] px-1 rounded text-[#93c5fd]">%%%MARKER%%%</code> tokens that DevPortal replaces at provision time.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── TAB 3: Environment Profiles ───────────────────────────────────────────────
-
-function ProfileCard({
-  profile,
-  onSave,
-}: {
-  profile: EnvironmentProfile;
-  onSave: (p: EnvironmentProfile) => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(profile);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-  const color = ENV_COLOUR[profile.name] ?? "#94a3b8";
-
-  async function save() {
-    setErr(""); setOk("");
-    try {
-      await onSave(draft);
-      setOk("Saved."); setEditing(false);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Save failed.");
-    }
-  }
-
-  const s = (field: keyof EnvironmentProfile) => (val: string) =>
-    setDraft((prev) => ({ ...prev, [field]: val }));
-  const n = (field: keyof EnvironmentProfile) => (val: string) =>
-    setDraft((prev) => ({ ...prev, [field]: parseInt(val) || 0 }));
-
-  return (
-    <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-5 flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <Badge label={profile.name} color={color} />
-        {!editing ? (
-          <button
-            onClick={() => { setDraft(profile); setEditing(true); setErr(""); setOk(""); }}
-            className="h-7 px-3 rounded bg-[#0f172a] border border-[#334155] text-[#94a3b8] text-[11px] cursor-pointer hover:bg-[#334155]"
-          >
-            Edit
-          </button>
-        ) : (
-          <div className="flex gap-2">
-            <button
-              onClick={() => setEditing(false)}
-              className="h-7 px-3 rounded border border-[#334155] bg-transparent text-[#94a3b8] text-[11px] cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={save}
-              className="h-7 px-3 rounded bg-primary border-none text-white text-[11px] cursor-pointer"
-            >
-              Save
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 text-[12px]">
-        {editing ? (
-          <>
-            <FieldRow label="CPU Request"><TextInput value={draft.cpu_request} onChange={s("cpu_request")} /></FieldRow>
-            <FieldRow label="CPU Limit"><TextInput value={draft.cpu_limit} onChange={s("cpu_limit")} /></FieldRow>
-            <FieldRow label="Mem Request"><TextInput value={draft.mem_request} onChange={s("mem_request")} /></FieldRow>
-            <FieldRow label="Mem Limit"><TextInput value={draft.mem_limit} onChange={s("mem_limit")} /></FieldRow>
-            <FieldRow label="Replicas"><TextInput value={String(draft.replicas)} onChange={n("replicas")} /></FieldRow>
-            <FieldRow label="Storage Class"><TextInput value={draft.storage_class} onChange={s("storage_class")} /></FieldRow>
-          </>
-        ) : (
-          <>
-            <div>
-              <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">CPU</p>
-              <p className="text-[#cbd5e1] font-mono m-0">{profile.cpu_request} → {profile.cpu_limit}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Memory</p>
-              <p className="text-[#cbd5e1] font-mono m-0">{profile.mem_request} → {profile.mem_limit}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Replicas</p>
-              <p className="text-[#cbd5e1] m-0">{profile.replicas}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Storage Class</p>
-              <p className="text-[#cbd5e1] font-mono m-0">{profile.storage_class || "—"}</p>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* HPA section */}
-      <div className="border-t border-[#334155] pt-3">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] text-[#475569] font-semibold uppercase tracking-wide m-0">HPA</p>
-          {editing ? (
-            <button
-              onClick={() => setDraft((p) => ({ ...p, hpa_enabled: !p.hpa_enabled }))}
-              className={`relative w-9 h-4.5 rounded-full border-none cursor-pointer transition-colors ${
-                draft.hpa_enabled ? "bg-primary" : "bg-[#334155]"
-              }`}
-              style={{ height: 18 }}
-            >
-              <span
-                className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${
-                  draft.hpa_enabled ? "left-[18px]" : "left-0.5"
-                }`}
-              />
-            </button>
-          ) : (
-            <Badge
-              label={profile.hpa_enabled ? "Enabled" : "Disabled"}
-              color={profile.hpa_enabled ? "#4ade80" : "#64748b"}
-            />
-          )}
-        </div>
-        {(editing ? draft.hpa_enabled : profile.hpa_enabled) && (
-          <div className="grid grid-cols-3 gap-2">
-            {editing ? (
-              <>
-                <FieldRow label="Min"><TextInput value={String(draft.hpa_min)} onChange={n("hpa_min")} /></FieldRow>
-                <FieldRow label="Max"><TextInput value={String(draft.hpa_max)} onChange={n("hpa_max")} /></FieldRow>
-                <FieldRow label="CPU %"><TextInput value={String(draft.cpu_threshold)} onChange={n("cpu_threshold")} /></FieldRow>
-              </>
-            ) : (
-              <>
-                <div>
-                  <p className="text-[10px] text-[#475569] m-0">Min/Max</p>
-                  <p className="text-[#cbd5e1] m-0 font-mono">{profile.hpa_min} – {profile.hpa_max}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-[#475569] m-0">CPU target</p>
-                  <p className="text-[#cbd5e1] m-0">{profile.cpu_threshold}%</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-[#475569] m-0">Mem target</p>
-                  <p className="text-[#cbd5e1] m-0">{profile.mem_threshold}%</p>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      <ErrorMsg msg={err} />
-      <SaveOk msg={ok} />
-    </div>
-  );
-}
-
-// ── Language Profiles Tab ─────────────────────────────────────────────────────
-
-function LanguageProfileCard({ profile, onSave }: { profile: LanguageProfile; onSave: (p: LanguageProfile) => Promise<void> }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<LanguageProfile>(profile);
-  const [envKey, setEnvKey] = useState("");
-  const [envVal, setEnvVal] = useState("");
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-
-  function startEdit() {
-    setDraft({ ...profile });
-    setEnvKey(""); setEnvVal(""); setErr(""); setOk("");
-    setEditing(true);
-  }
-
-  async function save() {
-    setErr(""); setOk("");
-    try {
-      await onSave(draft);
-      setOk("Saved."); setEditing(false);
-    } catch (e: any) {
-      setErr(e?.message ?? "Save failed.");
-    }
-  }
-
-  function addEnv() {
-    if (!envKey.trim()) return;
-    setDraft((d) => ({ ...d, extra_env: { ...d.extra_env, [envKey.trim()]: envVal } }));
-    setEnvKey(""); setEnvVal("");
-  }
-
-  function removeEnv(k: string) {
-    setDraft((d) => {
-      const next = { ...d.extra_env };
-      delete next[k];
-      return { ...d, extra_env: next };
-    });
-  }
-
-  const p = editing ? draft : profile;
-
-  return (
-    <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="text-[13px] font-semibold text-[#f8fafc]">{profile.display_name}</span>
-        <span className="text-[11px] font-mono text-[#475569] bg-[#0f172a] px-2 py-0.5 rounded">{profile.build_tool}</span>
-      </div>
-
-      {/* Probe delays */}
-      <div className="grid grid-cols-2 gap-2 text-[12px]">
-        <div>
-          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Liveness delay</p>
-          {editing ? (
-            <input
-              type="number" value={draft.liveness_delay}
-              onChange={(e) => setDraft((d) => ({ ...d, liveness_delay: Number(e.target.value) }))}
-              className="w-full bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[12px] text-[#f8fafc] font-mono"
-            />
-          ) : (
-            <p className="text-[#cbd5e1] font-mono m-0">{p.liveness_delay}s</p>
-          )}
-        </div>
-        <div>
-          <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide m-0">Readiness delay</p>
-          {editing ? (
-            <input
-              type="number" value={draft.readiness_delay}
-              onChange={(e) => setDraft((d) => ({ ...d, readiness_delay: Number(e.target.value) }))}
-              className="w-full bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[12px] text-[#f8fafc] font-mono"
-            />
-          ) : (
-            <p className="text-[#cbd5e1] font-mono m-0">{p.readiness_delay}s</p>
-          )}
-        </div>
-      </div>
-
-      {/* Extra env vars */}
-      <div>
-        <p className="text-[10px] text-[#475569] font-semibold uppercase tracking-wide mb-1 m-0">Injected env vars</p>
-        {Object.entries(p.extra_env ?? {}).length === 0 ? (
-          <p className="text-[11px] text-[#475569] m-0">—</p>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {Object.entries(p.extra_env ?? {}).map(([k, v]) => (
-              <div key={k} className="flex items-center gap-1 font-mono text-[11px]">
-                <span className="text-[#93c5fd]">{k}</span>
-                <span className="text-[#475569]">=</span>
-                <span className="text-[#86efac] flex-1 truncate">{v}</span>
-                {editing && (
-                  <button onClick={() => removeEnv(k)}
-                    className="text-[#f87171] text-[10px] border-none bg-transparent cursor-pointer px-1">✕</button>
-                )}
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--line)", minHeight: 52 }}>
+                <div className="overline" style={{ marginBottom: 8 }}>Default environment</div>
+                {envEntries.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--faint)" }}>No extra env vars.</div>
+                ) : envEntries.map(([k, v]) => (
+                  <div key={k} style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, lineHeight: "20px", display: "flex", gap: 8 }}>
+                    <span style={{ color: "var(--accent)" }}>{k}</span>
+                    <span style={{ color: "var(--line2)" }}>=</span>
+                    <span style={{ color: "var(--muted)" }}>{v}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-        {editing && (
-          <div className="flex gap-1 mt-2">
-            <input placeholder="KEY" value={envKey} onChange={(e) => setEnvKey(e.target.value)}
-              className="flex-1 bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[11px] text-[#f8fafc] font-mono" />
-            <input placeholder="value" value={envVal} onChange={(e) => setEnvVal(e.target.value)}
-              className="flex-1 bg-[#0f172a] border border-[#334155] rounded px-2 py-1 text-[11px] text-[#f8fafc] font-mono" />
-            <button onClick={addEnv}
-              className="px-2 py-1 bg-[#1e3a5f] border border-[#334155] rounded text-[#93c5fd] text-[11px] cursor-pointer">Add</button>
-          </div>
-        )}
+              <div style={{ padding: "10px 16px", background: "var(--card)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)" }}>
+                  {new Date(p.updated_at).toLocaleDateString()}
+                </div>
+                <Link to="/templates" style={{ fontSize: 12, color: "var(--accent)", textDecoration: "none" }}>Pipeline →</Link>
+              </div>
+            </div>
+          );
+        })}
       </div>
-
-      <ErrorMsg msg={err} />
-      <SaveOk msg={ok} />
-
-      <div className="flex gap-2 mt-auto">
-        {editing ? (
-          <>
-            <button onClick={() => setEditing(false)}
-              className="flex-1 h-7 rounded border border-[#334155] bg-transparent text-[#94a3b8] text-[11px] cursor-pointer">Cancel</button>
-            <button onClick={save}
-              className="flex-1 h-7 rounded bg-primary border-none text-white text-[11px] cursor-pointer">Save</button>
-          </>
-        ) : (
-          <button onClick={startEdit}
-            className="w-full h-7 rounded bg-[#1e3a5f] border border-[#334155] text-[#93c5fd] text-[11px] cursor-pointer hover:bg-[#1e293b]">
-            Edit
-          </button>
-        )}
-      </div>
-    </div>
+      {editProfile && <LangProfileModal profile={editProfile} onClose={() => setEditProfile(null)} />}
+    </>
   );
 }
 
-function LanguageProfilesTab() {
-  const { data: profiles, isLoading } = useLanguageProfiles();
-
-  const upsertHooks: Record<string, ReturnType<typeof useUpsertLanguageProfile>> = {
-    maven: useUpsertLanguageProfile("maven"),
-    gradle: useUpsertLanguageProfile("gradle"),
-    go: useUpsertLanguageProfile("go"),
-    "nodejs-express": useUpsertLanguageProfile("nodejs-express"),
-    nextjs: useUpsertLanguageProfile("nextjs"),
-    "python-fastapi": useUpsertLanguageProfile("python-fastapi"),
-    dotnet: useUpsertLanguageProfile("dotnet"),
-    "flutter-web": useUpsertLanguageProfile("flutter-web"),
-    auto: useUpsertLanguageProfile("auto"),
-  };
-
-  async function handleSave(p: LanguageProfile) {
-    await upsertHooks[p.build_tool]?.mutateAsync(p);
-  }
+// ── Manifest Templates tab ────────────────────────────────────────────────────
+function ManifestTemplatesTab({ onNew }: { onNew: () => void }) {
+  const { data: templates = [], isLoading } = useManifestTemplates();
+  const [expandedName, setExpandedName] = useState<string | null>(null);
+  const [editTemplate, setEditTemplate] = useState<ManifestTemplate | null>(null);
 
   return (
     <div>
-      <SectionHeader
-        title="Language Profiles"
-        sub="Probe timing and injected env vars per build tool. Baked into base/deployment.yaml at provision time — edit here, applies to all future services."
-      />
-      {isLoading ? (
-        <p className="text-[13px] text-[#64748b]">Loading profiles…</p>
-      ) : (
-        <div className="grid grid-cols-3 gap-4">
-          {(profiles ?? []).map((p) => (
-            <LanguageProfileCard key={p.build_tool} profile={p} onSave={handleSave} />
-          ))}
+      <div className="tbl-wrap">
+        <div className="tbl-head" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(150px,1fr) 100px 110px" }}>
+          <div>Template</div><div>Conditional</div><div>Updated</div><div></div>
         </div>
-      )}
+        {isLoading ? (
+          <div style={{ padding: "20px 18px", fontSize: 13, color: "var(--faint)" }}>Loading templates…</div>
+        ) : templates.length === 0 ? (
+          <div style={{ padding: "32px 18px", textAlign: "center" }}>
+            <div style={{ fontSize: 13, color: "var(--faint)", marginBottom: 10 }}>No manifest templates yet.</div>
+            <button className="btn btn-primary btn-sm" onClick={onNew}>Add first template</button>
+          </div>
+        ) : templates.map((t: ManifestTemplate) => (
+          <div key={t.name} style={{ borderBottom: "1px solid var(--line)" }}>
+            {/* Header row */}
+            <div style={{
+              display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(150px,1fr) 100px 110px",
+              padding: "12px 18px", alignItems: "center", cursor: "pointer", transition: "background .1s",
+            }}
+              onClick={() => setExpandedName(expandedName === t.name ? null : t.name)}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--card)"}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ""}
+            >
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, color: "var(--faint)", userSelect: "none" }}>{expandedName === t.name ? "▾" : "▸"}</span>
+                  <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>{t.display_name}</div>
+                </div>
+                <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11, color: "var(--faint)", marginTop: 2, paddingLeft: 16 }}>{t.name}</div>
+              </div>
+              <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)" }}>
+                {t.conditional || <span style={{ color: "var(--faint)", fontStyle: "italic" }}>Always</span>}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--faint)" }}>
+                {new Date(t.updated_at).toLocaleDateString()}
+              </div>
+              <div onClick={e => e.stopPropagation()}>
+                <button className="btn btn-secondary btn-sm" onClick={() => setEditTemplate(t)}>Edit</button>
+              </div>
+            </div>
+            {/* Expanded content */}
+            {expandedName === t.name && (
+              <div style={{ background: "var(--bg)", borderTop: "1px solid var(--line2)", padding: "0 18px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0 6px" }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--faint)", textTransform: "uppercase", letterSpacing: "0.06em" }}>YAML / Go template</span>
+                </div>
+                <pre style={{
+                  margin: 0, padding: "14px 16px", borderRadius: 8,
+                  background: "#020817", border: "1px solid var(--line)",
+                  fontSize: 12, lineHeight: 1.6, fontFamily: "JetBrains Mono,monospace",
+                  color: "var(--muted)", overflowX: "auto", maxHeight: 400, overflowY: "auto",
+                  whiteSpace: "pre",
+                }}>
+                  {t.content || <span style={{ color: "var(--faint)", fontStyle: "italic" }}>No content</span>}
+                </pre>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {editTemplate && <ManifestTemplateModal template={editTemplate} onClose={() => setEditTemplate(null)} />}
     </div>
   );
 }
 
-function EnvironmentProfilesTab() {
-  const { data: profiles, isLoading } = useEnvironmentProfiles();
-  const devUpdate = useUpdateEnvironmentProfile("dev");
-  const uatUpdate = useUpdateEnvironmentProfile("uat");
-  const prodUpdate = useUpdateEnvironmentProfile("prod");
-
-  const updaters: Record<string, ReturnType<typeof useUpdateEnvironmentProfile>> = {
-    dev: devUpdate, uat: uatUpdate, prod: prodUpdate,
-  };
-
-  async function handleSave(p: EnvironmentProfile) {
-    await updaters[p.name].mutateAsync(p);
-  }
-
-  return (
-    <div>
-      <SectionHeader
-        title="Environment Profiles"
-        sub="Resource limits, replica counts, and HPA settings per environment tier. All services inherit these automatically."
-      />
-      {isLoading ? (
-        <p className="text-[13px] text-[#64748b]">Loading profiles…</p>
-      ) : (
-        <div className="grid grid-cols-3 gap-4">
-          {(profiles ?? []).map((p) => (
-            <ProfileCard key={p.name} profile={p} onSave={handleSave} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Root Page ─────────────────────────────────────────────────────────────────
-
-type Tab = "clusters" | "manifest-templates" | "environment-profiles" | "language-profiles";
-
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "clusters",             label: "Cluster Registry",       icon: "🏗️" },
-  { id: "manifest-templates",   label: "Manifest Templates",     icon: "📄" },
-  { id: "environment-profiles", label: "Environment Profiles",   icon: "⚖️" },
-  { id: "language-profiles",    label: "Language Profiles",      icon: "🔧" },
-];
+// ── Main page ─────────────────────────────────────────────────────────────────
+const TABS = ["Clusters", "Environment Profiles", "Language Profiles", "Manifest Templates"] as const;
+type Tab = typeof TABS[number];
 
 export function PlatformPage() {
-  const [tab, setTab] = useState<Tab>("clusters");
+  const [tab, setTab] = useState<Tab>("Clusters");
+  const [showRegisterCluster, setShowRegisterCluster] = useState(false);
+  const [showNewLangProfile, setShowNewLangProfile] = useState(false);
+  const [showNewManifestTemplate, setShowNewManifestTemplate] = useState(false);
+
+  function handleAction() {
+    if (tab === "Clusters") setShowRegisterCluster(true);
+    else if (tab === "Language Profiles") setShowNewLangProfile(true);
+    else if (tab === "Manifest Templates") setShowNewManifestTemplate(true);
+  }
+
+  const ACTION_LABELS: Record<Tab, string | null> = {
+    "Clusters":             "Register cluster",
+    "Environment Profiles": null,
+    "Language Profiles":    "New language profile",
+    "Manifest Templates":   "New template",
+  };
 
   return (
-    <div className="p-8">
-      {/* Page title */}
-      <div className="mb-6">
-        <h1 className="text-[22px] font-bold text-[#f8fafc] m-0">Platform Engineering</h1>
-        <p className="text-[13px] text-[#64748b] mt-1 m-0">
-          Configure the shared infrastructure that all services inherit automatically.
-        </p>
+    <div style={{ padding: 28, maxWidth: 1320, display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+          <h1 className="page-h1">Platform administration</h1>
+          <p className="page-sub">Defaults every team inherits. Changes apply to services provisioned from now on.</p>
+        </div>
+        {ACTION_LABELS[tab] && (
+          <button className="btn btn-primary" onClick={handleAction}>{ACTION_LABELS[tab]}</button>
+        )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-[#0f172a] rounded-lg p-1 border border-[#334155] w-fit mb-8">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium border-none cursor-pointer transition-colors ${
-              tab === t.id
-                ? "bg-[#1e293b] text-[#f8fafc]"
-                : "bg-transparent text-[#64748b] hover:text-[#94a3b8]"
-            }`}
-          >
-            <span>{t.icon}</span>
-            {t.label}
-          </button>
+      <div className="tab-rail">
+        {TABS.map(t => (
+          <button key={t} className={`tab-btn${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>{t}</button>
         ))}
       </div>
 
-      {/* Tab content */}
-      {tab === "clusters"             && <ClustersTab />}
-      {tab === "manifest-templates"   && <ManifestTemplatesTab />}
-      {tab === "environment-profiles" && <EnvironmentProfilesTab />}
-      {tab === "language-profiles"    && <LanguageProfilesTab />}
+      {tab === "Clusters"              && <ClustersTab onRegister={() => setShowRegisterCluster(true)} />}
+      {tab === "Environment Profiles"  && <EnvProfilesTab />}
+      {tab === "Language Profiles"     && <LangProfilesTab onNew={() => setShowNewLangProfile(true)} />}
+      {tab === "Manifest Templates"    && <ManifestTemplatesTab onNew={() => setShowNewManifestTemplate(true)} />}
+
+      {showRegisterCluster      && <RegisterClusterModal onClose={() => setShowRegisterCluster(false)} />}
+      {showNewLangProfile       && <LangProfileModal onClose={() => setShowNewLangProfile(false)} />}
+      {showNewManifestTemplate  && <ManifestTemplateModal onClose={() => setShowNewManifestTemplate(false)} />}
     </div>
   );
 }

@@ -1,225 +1,217 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
-import { useCredentials, useCreateCredential, useDeleteCredential } from "@/lib/api";
+import { useCredentials, useCreateCredential, useDeleteCredential, Credential } from "@/lib/api";
 
-const CRED_TYPES = ["gitlab", "jenkins", "harbor", "defectdojo", "argocd"] as const;
-type CredType = typeof CRED_TYPES[number];
-const TYPE_LABELS: Record<CredType, string> = {
-  gitlab: "GitLab", jenkins: "Jenkins", harbor: "Harbor",
-  defectdojo: "DefectDojo", argocd: "ArgoCD",
+const PROVIDER_COLOR: Record<string, string> = {
+  jenkins:       "#f87171",
+  harbor:        "#38bdf8",
+  gitea:         "#4ade80",
+  argocd:        "#c084fc",
+  vault:         "#0ea5e9",
+  defectdojo:    "#fbbf24",
+  dependencytrack:"#94a3b8",
+  github:        "#e2e8f0",
+  gitlab:        "#fb923c",
+  docker:        "#38bdf8",
 };
 
-interface CredRow {
-  id: string;
-  provider_type: string;
-  label: string;
-  created_at: string;
+function providerColor(type: string) {
+  return PROVIDER_COLOR[type.toLowerCase().replace(/[^a-z]/g, "")] ?? "#64748b";
 }
 
-type PanelMode = "add" | "rotate";
-
-interface Panel {
-  mode: PanelMode;
-  type: CredType;
-  label: string;
-  token: string;
-  targetId?: string;
-  targetLabel?: string;
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
-export function CredentialsPage() {
-  const { data: creds, isLoading } = useCredentials();
-  const createCred = useCreateCredential();
-  const deleteCred = useDeleteCredential();
+// ── Add Credential Modal ──────────────────────────────────────────────────────
+function AddCredentialModal({ onClose }: { onClose: () => void }) {
+  const createM = useCreateCredential();
+  const [providerType, setProviderType] = useState("jenkins");
+  const [customType, setCustomType] = useState("");
+  const [label, setLabel] = useState("");
+  const [token, setToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [error, setError] = useState("");
 
-  const [panel, setPanel] = useState<Panel | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const KNOWN_PROVIDERS = ["jenkins","harbor","gitea","argocd","vault","defectdojo","dependencytrack","github","gitlab","docker"];
+  const isCustom = providerType === "__custom__";
+  const finalType = isCustom ? customType.trim() : providerType;
 
-  function openAdd() {
-    setPanel({ mode: "add", type: "gitlab", label: "", token: "" });
-  }
-  function openRotate(c: CredRow) {
-    setPanel({ mode: "rotate", type: c.provider_type as CredType, label: "", token: "", targetId: c.id, targetLabel: c.label });
-  }
-
-  async function handleSave() {
-    if (!panel) return;
-    if (!panel.token.trim()) return;
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!finalType || !label.trim() || !token.trim()) return;
+    setError("");
     try {
-      await createCred.mutateAsync({
-        provider_type: panel.type,
-        label: panel.mode === "add" ? panel.label : (panel.targetLabel ?? ""),
-        token: panel.token,
-      });
-      setPanel(null);
-    } catch { /* errors shown below */ }
-  }
-
-  async function handleDelete(id: string) {
-    try {
-      await deleteCred.mutateAsync(id);
-      setConfirmDelete(null);
-    } catch { /* ignore */ }
+      await createM.mutateAsync({ provider_type: finalType, label: label.trim(), token });
+      onClose();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add credential.");
+    }
   }
 
   return (
-    <div className="p-8 max-w-[840px]">
-      <div className="flex items-start justify-between mb-1.5">
-        <div className="flex items-center gap-2">
-          <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="1.5">
-            <rect x="3" y="7" width="10" height="7" rx="1.2" />
-            <path d="M5.2 7V4.8a2.8 2.8 0 0 1 5.6 0V7" />
-          </svg>
-          <h1 className="text-[24px] font-bold tracking-tight m-0">Credentials</h1>
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 440, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Add credential</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0 }}>×</button>
         </div>
-        <button
-          onClick={openAdd}
-          className="h-9 rounded-md border-none bg-primary text-white text-[13px] font-medium px-3.5 cursor-pointer"
-        >
-          + Add credential
-        </button>
-      </div>
-      <p className="text-[13px] text-[#94a3b8] mb-6">
-        Workspace tokens are encrypted at rest with AES-256-GCM. Raw values are never shown again after saving.
-      </p>
-
-      {/* Add / Rotate panel */}
-      {panel && (
-        <div className="border border-primary/30 bg-[#1e293b] rounded-[10px] p-5 mb-5">
-          <h3 className="text-[14px] font-semibold m-0 mb-3.5">
-            {panel.mode === "rotate" ? `Rotate token — ${panel.targetLabel}` : "Add credential"}
-          </h3>
-
-          {panel.mode === "add" && (
-            <>
-              {/* Type picker */}
-              <div className="flex gap-2 mb-3.5 flex-wrap">
-                {CRED_TYPES.map((t) => {
-                  const active = panel.type === t;
-                  return (
-                    <button
-                      key={t}
-                      onClick={() => setPanel((p) => p ? { ...p, type: t } : p)}
-                      className="text-[12px] px-3 py-1.5 rounded-md cursor-pointer border transition-colors"
-                      style={{
-                        background: active ? "rgba(56,189,248,0.1)" : "transparent",
-                        borderColor: active ? "rgba(56,189,248,0.3)" : "#334155",
-                        color: active ? "var(--brand-primary, #38bdf8)" : "#94a3b8",
-                      }}
-                    >
-                      {TYPE_LABELS[t]}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex flex-col gap-1.5 mb-3.5">
-                <label className="text-[12px] text-[#94a3b8]">Label</label>
-                <input
-                  type="text"
-                  placeholder="e.g. GitLab service account"
-                  value={panel.label}
-                  onChange={(e) => setPanel((p) => p ? { ...p, label: e.target.value } : p)}
-                  className="h-[38px] rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-[inherit] focus:outline-none"
-                />
-              </div>
-            </>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Provider</label>
+            <select className="field" value={providerType} onChange={e => setProviderType(e.target.value)}>
+              {KNOWN_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+              <option value="__custom__">Other…</option>
+            </select>
+          </div>
+          {isCustom && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Provider type</label>
+              <input className="field field-mono" placeholder="sonarqube" value={customType} onChange={e => setCustomType(e.target.value)} autoFocus />
+            </div>
           )}
-
-          <div className="flex flex-col gap-1.5 mb-4">
-            <label className="text-[12px] text-[#94a3b8]">Token</label>
-            <input
-              type="password"
-              placeholder="Paste token"
-              value={panel.token}
-              onChange={(e) => setPanel((p) => p ? { ...p, token: e.target.value } : p)}
-              className="h-[38px] rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-mono focus:outline-none"
-            />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Label</label>
+            <input className="field" placeholder="Production Jenkins" value={label} onChange={e => setLabel(e.target.value)} autoFocus={!isCustom} />
+            <span style={{ fontSize: 11, color: "var(--faint)" }}>Human-readable name for this credential set.</span>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={createCred.isPending}
-              className="h-9 rounded-md border-none bg-primary text-white text-[13px] font-medium px-4 cursor-pointer disabled:opacity-50"
-            >
-              {createCred.isPending ? "Saving…" : "Save"}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Token / secret</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input className="field field-mono" style={{ flex: 1 }} type={showToken ? "text" : "password"}
+                placeholder="API key, robot password, or token" value={token} onChange={e => setToken(e.target.value)} />
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowToken(v => !v)}>
+                {showToken ? "Hide" : "Show"}
+              </button>
+            </div>
+            <span style={{ fontSize: 11, color: "var(--faint)" }}>Stored in Vault — never logged or returned in API responses.</span>
+          </div>
+          {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={!finalType || !label.trim() || !token.trim() || createM.isPending}>
+              {createM.isPending ? "Adding…" : "Add credential"}
             </button>
-            <button
-              onClick={() => setPanel(null)}
-              className="h-9 rounded-md border border-[#334155] bg-transparent text-[#94a3b8] text-[13px] px-3.5 cursor-pointer"
-            >
-              Cancel
-            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Credential card ───────────────────────────────────────────────────────────
+function CredCard({ cred }: { cred: Credential }) {
+  const [confirming, setConfirming] = useState(false);
+  const deleteM = useDeleteCredential();
+  const color = providerColor(cred.provider_type);
+
+  function handleDelete() {
+    if (!confirming) { setConfirming(true); return; }
+    deleteM.mutate(cred.id, { onSettled: () => setConfirming(false) });
+  }
+
+  return (
+    <div className="card" style={{ padding: 0 }}>
+      <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{
+          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+          background: "var(--card)", border: "1px solid var(--line2)",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          color, fontSize: 13, fontWeight: 700,
+        }}>{(cred.label?.[0] ?? cred.provider_type[0]).toUpperCase()}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cred.label}</div>
+          <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color, marginTop: 2 }}>{cred.provider_type}</div>
+        </div>
+        <span style={{
+          padding: "2px 8px", borderRadius: 5, fontSize: 10.5, fontWeight: 600,
+          background: "var(--ok-soft)", color: "var(--ok)", border: "1px solid var(--ok)",
+        }}>Active</span>
+      </div>
+
+      <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <div>
+            <div className="overline" style={{ marginBottom: 4 }}>Provider</div>
+            <div style={{ fontSize: 12.5, color: "var(--text)", fontFamily: "JetBrains Mono,monospace" }}>{cred.provider_type}</div>
+          </div>
+          <div>
+            <div className="overline" style={{ marginBottom: 4 }}>Added</div>
+            <div style={{ fontSize: 12.5, color: "var(--muted)" }}>{relativeTime(cred.created_at)}</div>
           </div>
         </div>
-      )}
+        <div>
+          <div className="overline" style={{ marginBottom: 4 }}>Secret</div>
+          <input
+            readOnly value="••••••••••••••••••••"
+            className="field field-mono"
+            style={{ background: "var(--card)", border: "1px solid var(--line2)", cursor: "default" }}
+          />
+          <p style={{ fontSize: 11, color: "var(--faint)", margin: "6px 0 0" }}>
+            Stored in Vault, never rendered server-side.
+          </p>
+        </div>
+      </div>
 
-      {/* Credentials list */}
+      <div style={{ padding: "12px 18px", borderTop: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 }}>
+        <button
+          className={`btn btn-sm ${confirming ? "btn-primary" : "btn-ghost"}`}
+          style={confirming ? { background: "var(--bad)", borderColor: "var(--bad)" } : { color: "var(--bad)" }}
+          onClick={handleDelete}
+          disabled={deleteM.isPending}
+        >
+          {deleteM.isPending ? "Revoking…" : confirming ? "Confirm revoke" : "Revoke"}
+        </button>
+        {confirming && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export function CredentialsPage() {
+  const { data: creds = [], isLoading } = useCredentials();
+  const [showAdd, setShowAdd] = useState(false);
+
+  return (
+    <div style={{ padding: 28, maxWidth: 1320, display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 className="page-h1">Platform credentials</h1>
+          <p className="page-sub">
+            {isLoading ? "Loading…" : `${creds.length} integration${creds.length !== 1 ? "s" : ""}`} · secrets stored in Vault, never rendered server-side
+          </p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add credential</button>
+      </div>
+
       {isLoading ? (
-        <div className="text-[13px] text-[#64748b]">Loading credentials…</div>
-      ) : !creds?.length ? (
-        <div className="border border-dashed border-[#334155] rounded-[10px] py-12 text-center">
-          <p className="text-[14px] font-medium m-0 mb-1">No credentials yet</p>
-          <p className="text-[12px] text-[#94a3b8] m-0">Add workspace tokens to enable provisioning.</p>
+        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading credentials…</div>
+      ) : creds.length === 0 ? (
+        <div style={{ border: "1px dashed var(--line2)", borderRadius: 10, padding: 48, textAlign: "center" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>No credentials yet</div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16 }}>Add a credential to connect Jenkins, Harbor, Gitea and other integrations.</div>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add first credential</button>
         </div>
       ) : (
-        <div className="flex flex-col gap-2.5">
-          {(creds as CredRow[]).map((c) => {
-            const typeLabel = TYPE_LABELS[c.provider_type as CredType] ?? c.provider_type;
-            const confirming = confirmDelete === c.id;
-            const updated = new Date(c.created_at).toLocaleDateString();
-            return (
-              <div
-                key={c.id}
-                className="border border-[#334155] bg-[#1e293b] rounded-[10px] px-[18px] py-4 flex items-center justify-between gap-3"
-              >
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <span className="text-[11px] font-semibold px-2.5 py-[3px] rounded-md bg-[#334155] text-[#cbd5e1] shrink-0">
-                    {typeLabel}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-[14px] font-medium">{c.label}</div>
-                    <div className="text-[12px] text-[#64748b] font-mono mt-0.5">
-                      •••••••••••••••• &nbsp;·&nbsp; updated {updated}
-                    </div>
-                  </div>
-                </div>
-                {confirming ? (
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      onClick={() => handleDelete(c.id)}
-                      className="text-[12px] text-[#f87171] bg-none border-none cursor-pointer"
-                    >
-                      Confirm delete
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelete(null)}
-                      className="text-[12px] text-[#94a3b8] bg-none border-none cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      onClick={() => openRotate(c)}
-                      className="text-[12px] text-[#cbd5e1] bg-transparent border border-[#334155] rounded-md px-3 py-1.5 cursor-pointer"
-                    >
-                      Rotate
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelete(c.id)}
-                      className="text-[12px] text-[#94a3b8] bg-transparent border border-[#334155] rounded-md px-3 py-1.5 cursor-pointer hover:text-[#f87171] hover:border-red-500/40 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px,1fr))", gap: 14 }}>
+          {creds.map((c: Credential) => <CredCard key={c.id} cred={c} />)}
         </div>
       )}
+
+      {showAdd && <AddCredentialModal onClose={() => setShowAdd(false)} />}
     </div>
   );
 }

@@ -132,8 +132,43 @@ export interface AuditEvent {
   resource_type: string;
   resource_id?: string;
   user_id?: string;
+  actor_email?: string;
   detail?: Record<string, unknown>;
   created_at: string;
+}
+
+export interface DashboardStats {
+  service_count: number;
+  app_count: number;
+  cluster_count: number;
+  active_service_count: number;
+  failed_service_count: number;
+  pipeline_success_rate: number;
+}
+
+export interface DashboardActivityEvent {
+  id: string;
+  action: string;
+  resource_type: string;
+  resource_id?: string;
+  actor_email?: string;
+  detail?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DashboardCluster {
+  id: string;
+  name: string;
+  display_name: string;
+  environment: string;
+  api_endpoint: string;
+  status: string;
+}
+
+export interface DashboardData {
+  stats: DashboardStats;
+  clusters: DashboardCluster[];
+  activity: DashboardActivityEvent[];
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -390,6 +425,7 @@ export function useCreateService(appId: string) {
       members?: { user_id: string; role: string }[];
       infra_requirements?: { service_type: string; config: Record<string, unknown> }[];
       talks_to?: { project_id: string; port: number }[];
+      service_kind?: string;
     }) =>
       apiFetch<CreateProjectResponse>(`/api/v1/applications/${appId}/services`, {
         method: "POST",
@@ -554,6 +590,16 @@ export function useDeleteCredential() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
+  });
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+
+export function useDashboard() {
+  return useQuery<DashboardData>({
+    queryKey: ["dashboard"],
+    queryFn: () => apiFetch("/api/v1/dashboard"),
+    refetchInterval: 30_000,
   });
 }
 

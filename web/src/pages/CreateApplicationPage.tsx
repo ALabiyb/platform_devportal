@@ -2,19 +2,27 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useCreateApplication } from "@/lib/api";
+import { useCreateApplication, useUsers, User } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
 
 export function CreateApplicationPage() {
   const navigate = useNavigate();
   const create = useCreateApplication();
+  const { data: users = [] } = useUsers();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [maintainerIds, setMaintainerIds] = useState<string[]>([]);
   const [error, setError] = useState("");
 
   function slugPreview(n: string) {
     return n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  }
+
+  function toggleMaintainer(uid: string) {
+    setMaintainerIds(prev =>
+      prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]
+    );
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -23,6 +31,17 @@ export function CreateApplicationPage() {
     setError("");
     try {
       const app = await create.mutateAsync({ name: name.trim(), description: description.trim() });
+      // Add selected maintainers as members
+      await Promise.all(
+        maintainerIds.map(uid =>
+          fetch(`/api/v1/applications/${app.id}/members`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ user_id: uid, role: "maintainer" }),
+          })
+        )
+      );
       navigate(`/applications/${app.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create application.");
@@ -82,6 +101,39 @@ export function CreateApplicationPage() {
               rows={3}
               className="rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 py-2 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60 resize-none"
             />
+          </div>
+
+          {/* Maintainers */}
+          <div className="flex flex-col gap-2">
+            <label className="text-[13px] font-medium">
+              Team members <span className="text-[#64748b] font-normal">(optional)</span>
+            </label>
+            <p className="text-[11px] text-[#64748b] m-0">Select users who will have access to add services to this application.</p>
+            <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid #334155", borderRadius: 8, background: "#0f172a" }}>
+              {users.length === 0 && (
+                <div style={{ padding: "12px", fontSize: 12, color: "#64748b" }}>No other users found.</div>
+              )}
+              {users.map((u: User) => {
+                const selected = maintainerIds.includes(u.id);
+                return (
+                  <label key={u.id} style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
+                    cursor: "pointer", borderBottom: "1px solid #1e293b",
+                    background: selected ? "rgba(14,165,233,0.08)" : "transparent",
+                  }}>
+                    <input type="checkbox" checked={selected} onChange={() => toggleMaintainer(u.id)}
+                      style={{ accentColor: "#0ea5e9" }} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: "#f8fafc" }}>{u.display_name}</div>
+                      <div style={{ fontSize: 11, color: "#64748b", fontFamily: "JetBrains Mono,monospace" }}>{u.email}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            {maintainerIds.length > 0 && (
+              <p className="text-[11px] text-[#0ea5e9] m-0">{maintainerIds.length} member{maintainerIds.length !== 1 ? "s" : ""} selected</p>
+            )}
           </div>
 
           {error && <p className="text-[12px] text-[#f87171] m-0">{error}</p>}
