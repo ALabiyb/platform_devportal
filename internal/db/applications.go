@@ -201,7 +201,8 @@ func (db *DB) ListServicesByApplication(ctx context.Context, appID uuid.UUID) ([
 		       created_at, created_by, application_id,
 		       app_timezone, staging_url, k8s_manifest_paths,
 		       port, health_path,
-		       vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
+		       vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low,
+		       service_kind
 		FROM projects
 		WHERE application_id = $1
 		ORDER BY created_at ASC

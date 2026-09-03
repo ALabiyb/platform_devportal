@@ -159,6 +159,8 @@ type Project struct {
 	VulnSLAHigh     int `db:"vuln_sla_high"     json:"vuln_sla_high"`
 	VulnSLAMedium   int `db:"vuln_sla_medium"   json:"vuln_sla_medium"`
 	VulnSLALow      int `db:"vuln_sla_low"      json:"vuln_sla_low"`
+	// Added in migration 012 — controls manifest shape (backend | frontend | worker).
+	ServiceKind string `db:"service_kind" json:"service_kind"`
 }
 
 // ProjectMember links a user to a service with a role (lead | developer).

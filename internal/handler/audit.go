@@ -22,6 +22,7 @@ type auditEventResponse struct {
 	ResourceType string          `json:"resource_type"`
 	ResourceID   *string         `json:"resource_id,omitempty"`
 	UserID       *string         `json:"user_id,omitempty"`
+	ActorEmail   *string         `json:"actor_email,omitempty"`
 	Detail       json.RawMessage `json:"detail,omitempty"`
 	CreatedAt    string          `json:"created_at"`
 }
@@ -50,6 +51,7 @@ func (h *Handler) ListAuditEvents(w http.ResponseWriter, r *http.Request) {
 			ID:           e.ID.String(),
 			Action:       e.Action,
 			ResourceType: e.ResourceType,
+			ActorEmail:   e.ActorEmail,
 			CreatedAt:    e.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		}
 		if e.ResourceID != nil {

@@ -32,6 +32,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/ALabiyb/platform_devportal/internal/db"
@@ -181,16 +182,50 @@ func (w *Worker) dispatch(job *db.ProvisioningJob) {
 		envs[i] = &envRows[i]
 	}
 
+	// Resolve the parent application so we can pass OrgID to the orchestrator
+	// for cluster registry lookups, and write audit events after provisioning.
+	var appForAudit *db.Application
+	if project.ApplicationID != nil {
+		if a, err := w.db.GetApplication(ctx, *project.ApplicationID); err == nil {
+			appForAudit = a
+		}
+	}
+
+	orgID := uuid.UUID{}
+	if appForAudit != nil {
+		orgID = appForAudit.OrgID
+	}
+
 	input := provisioner.ProvisionInput{
 		Project:         project,
 		Environments:    envs,
 		GitNamespace:    job.Payload.GitNamespace,
 		ApplicationSlug: job.Payload.ApplicationSlug,
+		OrgID:           orgID,
 	}
 
 	// Provision is a blocking call that updates step rows and broadcasts SSE
 	// events. It manages its own error handling and project status internally.
 	provErr := w.orch.Provision(ctx, input)
+
+	// Write an audit event now that we know the outcome.
+	if appForAudit != nil {
+		pid := project.ID
+		action := "service.provisioning.complete"
+		detail := map[string]any{"name": project.Name}
+		if provErr != nil {
+			action = "service.provisioning.failed"
+			detail["err"] = provErr.Error()
+		}
+		_ = w.db.InsertAuditEvent(ctx, db.AuditEvent{
+			OrgID:        appForAudit.OrgID,
+			Action:       action,
+			ResourceType: "service",
+			ResourceID:   &pid,
+			Detail:       db.AuditEventDetail(detail),
+		})
+	}
+
 	if provErr != nil {
 		slog.Error("worker: provisioning failed",
 			"job_id", job.ID, "project_id", job.ProjectID, "err", provErr)

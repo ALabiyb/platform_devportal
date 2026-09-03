@@ -67,7 +67,17 @@ func Open(ctx context.Context, cfg *config.Config) (*DB, error) {
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}
 
-	return &DB{pool: pool}, nil
+	database := &DB{pool: pool}
+
+	// Run any pending SQL migrations before the application starts serving.
+	// This ensures that on every deployment — including first-time deploys to
+	// a new server — the schema is at the correct version automatically.
+	if err := database.Migrate(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("db: migrate: %w", err)
+	}
+
+	return database, nil
 }
 
 // Close drains in-flight queries and releases all pool connections.

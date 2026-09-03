@@ -198,7 +198,8 @@ func (db *DB) ListProjectsByOrg(ctx context.Context, orgID uuid.UUID) ([]Project
 		       p.manifest_repo_url, p.app_repo_url, p.created_at, p.created_by,
 		       p.application_id, p.app_timezone, p.staging_url, p.k8s_manifest_paths,
 		       p.port, p.health_path,
-		       p.vuln_sla_critical, p.vuln_sla_high, p.vuln_sla_medium, p.vuln_sla_low
+		       p.vuln_sla_critical, p.vuln_sla_high, p.vuln_sla_medium, p.vuln_sla_low,
+		       p.service_kind
 		FROM projects p
 		LEFT JOIN teams t ON p.team_id = t.id
 		WHERE p.status != 'archived'

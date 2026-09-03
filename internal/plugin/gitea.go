@@ -168,6 +168,26 @@ func (g *GiteaAdapter) CommitFiles(ctx context.Context, input CommitFilesInput) 
 	return nil
 }
 
+// CreateBranch creates newBranch as a reference to fromBranch's HEAD — no commit.
+// Idempotent: returns nil if the branch already exists (HTTP 422).
+func (g *GiteaAdapter) CreateBranch(ctx context.Context, repoPath, newBranch, fromBranch string) error {
+	owner, repo := splitPath(repoPath)
+	err := g.do(ctx, http.MethodPost,
+		fmt.Sprintf("/repos/%s/%s/branches", owner, repo),
+		map[string]any{
+			"new_branch_name": newBranch,
+			"old_branch_name": fromBranch,
+		}, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "422") || strings.Contains(err.Error(), "already exists") {
+			return nil
+		}
+		return fmt.Errorf("gitea.CreateBranch %s→%s: %w", fromBranch, newBranch, err)
+	}
+	slog.Info("gitea: branch created", "repo", repoPath, "branch", newBranch, "from", fromBranch)
+	return nil
+}
+
 // EnsureWebhook registers a Jenkins webhook. Idempotent — skips if URL exists.
 func (g *GiteaAdapter) EnsureWebhook(ctx context.Context, input WebhookInput) error {
 	owner, repo := splitPath(input.RepoPath)

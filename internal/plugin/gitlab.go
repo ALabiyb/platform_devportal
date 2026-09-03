@@ -168,6 +168,29 @@ func (g *GitLabAdapter) CommitFiles(ctx context.Context, input CommitFilesInput)
 	return fmt.Errorf("gitlab.CommitFiles: %w", err)
 }
 
+// CreateBranch creates newBranch as a reference to fromBranch's HEAD — no commit.
+// Idempotent: returns nil if the branch already exists.
+func (g *GitLabAdapter) CreateBranch(ctx context.Context, repoPath, newBranch, fromBranch string) error {
+	project, err := g.getProject(ctx, repoPath)
+	if err != nil {
+		return fmt.Errorf("gitlab.CreateBranch: resolve project: %w", err)
+	}
+	err = g.do(ctx, http.MethodPost,
+		fmt.Sprintf("/projects/%d/repository/branches", project.ID),
+		map[string]any{
+			"branch": newBranch,
+			"ref":    fromBranch,
+		}, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "branch name already exists") {
+			return nil
+		}
+		return fmt.Errorf("gitlab.CreateBranch %s→%s: %w", fromBranch, newBranch, err)
+	}
+	slog.Info("gitlab: branch created", "repo", repoPath, "branch", newBranch, "from", fromBranch)
+	return nil
+}
+
 // EnsureWebhook registers a Jenkins webhook on the repository.
 // If a webhook with the same URL is already registered, it is left unchanged.
 func (g *GitLabAdapter) EnsureWebhook(ctx context.Context, input WebhookInput) error {

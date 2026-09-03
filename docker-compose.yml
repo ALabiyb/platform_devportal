@@ -41,6 +41,9 @@ services:
       # In production this comes from K8s ConfigMap / Secret — not hardcoded.
       DB_HOST: postgres
       DB_PORT: "5432"
+      DB_NAME: devportal
+      DB_USER: devportal
+      DB_PASSWORD: ${DB_PASSWORD}
     networks:
       - traefik-net          # joins the shared network so it can reach postgres, keycloak, gitea, jenkins
     extra_hosts:

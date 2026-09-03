@@ -36,8 +36,10 @@ func (db *DB) CreateProject(ctx context.Context, p Project) (*Project, error) {
 			team_id, name, slug, git_repo_url, harbor_project,
 			jenkins_folder, build_tool, notification_email, created_by, application_id,
 			app_timezone, staging_url, k8s_manifest_paths,
-			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			port, health_path,
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low,
+			service_kind
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING
 			id, team_id, name, slug, git_repo_url, harbor_project,
 			jenkins_folder, build_tool, notification_email,
@@ -45,13 +47,16 @@ func (db *DB) CreateProject(ctx context.Context, p Project) (*Project, error) {
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
 			app_timezone, staging_url, k8s_manifest_paths,
 			port, health_path,
-			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low,
+			service_kind
 	`
 	rows, err := db.pool.Query(ctx, q,
 		p.TeamID, p.Name, p.Slug, p.GitRepoURL, p.HarborProject,
 		p.JenkinsFolder, p.BuildTool, p.NotificationEmail, p.CreatedBy, p.ApplicationID,
 		p.AppTimezone, p.StagingURL, p.K8sManifestPaths,
+		p.Port, p.HealthPath,
 		p.VulnSLACritical, p.VulnSLAHigh, p.VulnSLAMedium, p.VulnSLALow,
+		p.ServiceKind,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("db.CreateProject: query: %w", err)
@@ -73,7 +78,8 @@ func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*Project, error) {
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
 			app_timezone, staging_url, k8s_manifest_paths,
 			port, health_path,
-			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low,
+			service_kind
 		FROM projects
 		WHERE id = $1
 	`
@@ -98,7 +104,8 @@ func (db *DB) ListProjectsByTeam(ctx context.Context, teamID uuid.UUID) ([]Proje
 			manifest_repo_url, app_repo_url, created_at, created_by, application_id,
 			app_timezone, staging_url, k8s_manifest_paths,
 			port, health_path,
-			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
+			vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low,
+			service_kind
 		FROM projects
 		WHERE team_id = $1
 		ORDER BY created_at DESC
@@ -140,7 +147,8 @@ func (db *DB) RenameProject(ctx context.Context, id uuid.UUID, name string) (*Pr
 		          manifest_repo_url, app_repo_url, created_at, created_by, application_id,
 		          app_timezone, staging_url, k8s_manifest_paths,
 		          port, health_path,
-		          vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
+		          vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low,
+		          service_kind
 	`
 	rows, err := db.pool.Query(ctx, q, name, id)
 	if err != nil {
@@ -174,7 +182,8 @@ func (db *DB) UpdateService(ctx context.Context, id uuid.UUID,
 		          manifest_repo_url, app_repo_url, created_at, created_by, application_id,
 		          app_timezone, staging_url, k8s_manifest_paths,
 		          port, health_path,
-		          vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low
+		          vuln_sla_critical, vuln_sla_high, vuln_sla_medium, vuln_sla_low,
+		          service_kind
 	`
 	rows, err := db.pool.Query(ctx, q, name, buildTool, notificationEmail, appTimezone, stagingURL, k8sManifestPaths, id)
 	if err != nil {

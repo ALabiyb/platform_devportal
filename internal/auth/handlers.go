@@ -144,8 +144,8 @@ func (h *Handler) HandleLocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := h.localProvider.Authenticate(r.Context(), req.Email, req.Password)
-	if err != nil {
+	// Authenticate verifies the bcrypt hash; Authenticate also returns the user for us.
+	if _, err := h.localProvider.Authenticate(r.Context(), req.Email, req.Password); err != nil {
 		if errors.Is(err, ErrAccountDisabled) {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -155,14 +155,14 @@ func (h *Handler) HandleLocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the stored role from the DB (local users have role in users table).
+	// Fetch the full user row (role, id) — local users are never upserted via OIDC.
 	dbUser, err := h.database.GetLocalUserByEmail(r.Context(), req.Email)
 	if err != nil {
 		jsonError(w, "login failed", http.StatusInternalServerError)
 		return
 	}
 
-	if err := h.finishLogin(w, r, claims, dbUser.Role); err != nil {
+	if err := h.createLocalSession(w, r, dbUser); err != nil {
 		jsonError(w, "login failed", http.StatusInternalServerError)
 		return
 	}
@@ -214,13 +214,9 @@ func (h *Handler) HandleLocalRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims := &Claims{
-		Sub:         user.ID.String(),
-		Email:       user.Email,
-		DisplayName: user.DisplayName,
-		Provider:    "local",
-	}
-	if err := h.finishLogin(w, r, claims, RoleAdmin); err != nil {
+	// createLocalSession instead of finishLogin — local users already exist in the DB;
+	// calling UpsertUser would create a second row with a different provider_id.
+	if err := h.createLocalSession(w, r, user); err != nil {
 		jsonError(w, "account created but login failed", http.StatusInternalServerError)
 		return
 	}
@@ -287,6 +283,31 @@ func (h *Handler) HandleMe(w http.ResponseWriter, r *http.Request) {
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
+// createLocalSession creates a session for an already-persisted local user and sets the cookie.
+// Used by local-auth handlers to avoid the UpsertUser call that finishLogin does —
+// UpsertUser would create a duplicate row because CreateLocalUser stores provider_id=email
+// while UpsertUser would store provider_id=UUID (from Claims.Sub).
+func (h *Handler) createLocalSession(w http.ResponseWriter, r *http.Request, user *db.User) error {
+	sessionID := uuid.New().String()
+	if err := h.database.CreateSession(r.Context(), db.Session{
+		ID:        sessionID,
+		UserID:    user.ID,
+		Role:      user.Role,
+		ExpiresAt: time.Now().UTC().Add(8 * time.Hour),
+	}); err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "devportal_session",
+		Value:    sessionID,
+		Path:     "/",
+		MaxAge:   28800,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return nil
+}
+
 // finishLogin is shared by both OIDC callback and local login.
 // It upserts the org + user in the DB, creates a session, and sets the cookie.
 func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, claims *Claims, role string) error {
@@ -312,7 +333,7 @@ func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, claims *Cl
 		ID:        sessionID,
 		UserID:    user.ID,
 		Role:      role,
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+		ExpiresAt: time.Now().UTC().Add(8 * time.Hour),
 	}); err != nil {
 		return err
 	}
@@ -321,7 +342,7 @@ func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, claims *Cl
 		Name:     "devportal_session",
 		Value:    sessionID,
 		Path:     "/",
-		MaxAge:   86400,
+		MaxAge:   28800,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})

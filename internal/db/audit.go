@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // InsertAuditEvent writes one immutable audit record.
@@ -49,23 +48,40 @@ func AuditEventDetail(v any) []byte {
 	return b
 }
 
+// AuditEventWithActor extends AuditEvent with the actor's email for display.
+type AuditEventWithActor struct {
+	AuditEvent
+	ActorEmail *string `json:"actor_email,omitempty"`
+}
+
 // ListAuditEvents returns the most recent audit events for an org,
-// newest first. Used by the admin audit log UI (Day 15).
-func (db *DB) ListAuditEvents(ctx context.Context, orgID uuid.UUID, limit int) ([]AuditEvent, error) {
+// newest first, with actor email joined from users.
+func (db *DB) ListAuditEvents(ctx context.Context, orgID uuid.UUID, limit int) ([]AuditEventWithActor, error) {
 	const q = `
-		SELECT id, org_id, user_id, action, resource_type, resource_id, detail, created_at
-		FROM audit_events
-		WHERE org_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2
+		SELECT ae.id, ae.org_id, ae.user_id, ae.action, ae.resource_type,
+		       ae.resource_id, ae.detail, ae.created_at,
+		       u.email AS actor_email
+		FROM   audit_events ae
+		LEFT   JOIN users u ON ae.user_id = u.id
+		WHERE  ae.org_id = $1
+		ORDER  BY ae.created_at DESC
+		LIMIT  $2
 	`
 	rows, err := db.pool.Query(ctx, q, orgID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("db.ListAuditEvents: query: %w", err)
 	}
-	events, err := pgx.CollectRows(rows, pgx.RowToStructByName[AuditEvent])
-	if err != nil {
-		return nil, fmt.Errorf("db.ListAuditEvents: scan: %w", err)
+	defer rows.Close()
+	var events []AuditEventWithActor
+	for rows.Next() {
+		var e AuditEventWithActor
+		if err := rows.Scan(
+			&e.ID, &e.OrgID, &e.UserID, &e.Action, &e.ResourceType,
+			&e.ResourceID, &e.Detail, &e.CreatedAt, &e.ActorEmail,
+		); err != nil {
+			return nil, fmt.Errorf("db.ListAuditEvents: scan: %w", err)
+		}
+		events = append(events, e)
 	}
-	return events, nil
+	return events, rows.Err()
 }

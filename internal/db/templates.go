@@ -77,14 +77,18 @@ func (db *DB) UpsertPipelineTemplate(ctx context.Context, buildTool, jenkinsfile
 	return nil
 }
 
-// SeedPipelineTemplates inserts default templates for build tools that don't yet
-// have a row. Existing rows are left untouched — admin edits are preserved.
+// SeedPipelineTemplates inserts default templates and keeps them up-to-date for
+// rows that have never been admin-edited (updated_by IS NULL). Admin-edited rows
+// are left untouched so manual customisations survive container restarts.
 func (db *DB) SeedPipelineTemplates(ctx context.Context, defaults []PipelineTemplate) error {
 	for _, t := range defaults {
 		_, err := db.pool.Exec(ctx, `
 			INSERT INTO pipeline_templates (build_tool, jenkinsfile, dockerfile)
 			VALUES ($1, $2, $3)
-			ON CONFLICT (build_tool) DO NOTHING
+			ON CONFLICT (build_tool) DO UPDATE
+			    SET jenkinsfile = EXCLUDED.jenkinsfile,
+			        dockerfile  = EXCLUDED.dockerfile
+			WHERE pipeline_templates.updated_by IS NULL
 		`, t.BuildTool, t.Jenkinsfile, t.Dockerfile)
 		if err != nil {
 			return fmt.Errorf("db.SeedPipelineTemplates[%s]: %w", t.BuildTool, err)
