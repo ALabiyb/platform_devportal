@@ -3,7 +3,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { LandingPage } from "@/pages/LandingPage";
-import { LoginPage } from "@/pages/LoginPage";
 import { SignInPage } from "@/pages/SignInPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -61,7 +60,7 @@ export function Router() {
     <BrowserRouter>
       <Routes>
         <Route path="/signin" element={<PublicOnlyRoute><SignInPage /></PublicOnlyRoute>} />
-        <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
+        <Route path="/login" element={<Navigate to="/signin" replace />} />
         <Route path="/register" element={<PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>} />
 
         <Route path="/" element={<AppRoot />}>
