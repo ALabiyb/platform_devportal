@@ -228,11 +228,11 @@ export function SignInPage() {
               Sign in to DevPortal
             </h2>
             <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
-              Use Okta SSO, or a break-glass account if Okta is unavailable.
+              Use SSO, or a break-glass account if SSO is unavailable.
             </p>
           </div>
 
-          {/* Okta SSO */}
+          {/* SSO */}
           <button
             onClick={handleSso}
             disabled={ssoState === "loading"}
@@ -249,17 +249,15 @@ export function SignInPage() {
             {ssoState === "loading" ? (
               <>
                 <span className="spinner" style={{ borderColor: "var(--accent-ink)", borderTopColor: "transparent" }} />
-                Redirecting to Okta…
+                Redirecting…
               </>
             ) : (
               <>
-                <div style={{
-                  width: 18, height: 18, borderRadius: 4,
-                  background: "var(--accent-ink)", color: "var(--accent)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 11, fontWeight: 700,
-                }}>O</div>
-                Continue with Okta SSO
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                Continue with SSO
               </>
             )}
           </button>
@@ -364,7 +362,7 @@ export function SignInPage() {
             border: "1px solid var(--line)",
           }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
-              Break-glass sign-in is recorded in the audit log with IP and device, and notifies the platform on-call. Use SSO unless Okta is down.
+              Break-glass sign-in is recorded in the audit log with IP and device, and notifies the platform on-call. Use SSO unless it's down.
             </p>
           </div>
 
