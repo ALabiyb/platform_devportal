@@ -9,7 +9,7 @@ import {
   useClusterServices, useUpsertClusterService,
   Cluster, EnvironmentProfile, LanguageProfile, ManifestTemplate, ClusterPlatformService,
 } from "@/lib/api";
-import { Modal, FormField as Field, PageHeader } from "@/components/kit";
+import { Modal, FormField as Field, PageHeader, TableRowSkeleton } from "@/components/kit";
 
 // ── Register Cluster Modal ─────────────────────────────────────────────────────
 function RegisterClusterModal({ onClose }: { onClose: () => void }) {
@@ -401,7 +401,9 @@ function ClustersTab({ onRegister }: { onRegister: () => void }) {
           <div>Cluster</div><div>Environment</div><div>API Endpoint</div><div>Status</div><div></div>
         </div>
         {isLoading ? (
-          <div style={{ padding: "20px 18px", fontSize: 13, color: "var(--faint)" }}>Loading clusters…</div>
+          Array.from({ length: 3 }).map((_, i) => (
+            <TableRowSkeleton key={i} gridTemplateColumns="minmax(0,1.3fr) 100px minmax(200px,1fr) 130px 110px" />
+          ))
         ) : clusters.length === 0 ? (
           <div style={{ padding: "32px 18px", textAlign: "center" }}>
             <div style={{ fontSize: 13, color: "var(--faint)", marginBottom: 10 }}>No clusters registered.</div>

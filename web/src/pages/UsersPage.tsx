@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState, useRef, useEffect } from "react";
 import { useUsers, useCurrentUser, useCreateUser, useUpdateUserRole, useDeactivateUser, User } from "@/lib/api";
-import { Modal, FormField, Button, PageHeader } from "@/components/kit";
+import { Modal, FormField, Button, PageHeader, TableRowSkeleton } from "@/components/kit";
 import { useToast } from "@/components/toast";
 
 type DisplayRole = "Platform admin" | "Developer" | "Read only";
@@ -245,18 +245,20 @@ export function UsersPage() {
         </div>
       </div>
 
-      {isLoading ? (
-        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading users…</div>
-      ) : (
-        <div className="tbl-wrap">
-          <div className="tbl-head" style={{
-            gridTemplateColumns: "minmax(220px,1.3fr) 140px minmax(180px,1fr) 150px 110px",
-            minWidth: 900,
-          }}>
-            <div>User</div><div>Role</div><div>Email</div>
-            <div>Provider</div><div>Status</div>
-          </div>
-          {filtered.length === 0 ? (
+      <div className="tbl-wrap">
+        <div className="tbl-head" style={{
+          gridTemplateColumns: "minmax(220px,1.3fr) 140px minmax(180px,1fr) 150px 110px",
+          minWidth: 900,
+        }}>
+          <div>User</div><div>Role</div><div>Email</div>
+          <div>Provider</div><div>Status</div>
+        </div>
+        {isLoading ? (
+          Array.from({ length: 6 }).map((_, i) => (
+            <TableRowSkeleton key={i} gridTemplateColumns="minmax(220px,1.3fr) 140px minmax(180px,1fr) 150px 110px" minWidth={900} />
+          ))
+        ) : (
+          filtered.length === 0 ? (
             <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--faint)" }}>No users match these filters</div>
           ) : filtered.map((u: User) => {
             const faded = !u.is_active;
@@ -304,9 +306,9 @@ export function UsersPage() {
                 </div>
               </div>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
 
       {showInvite && <InviteModal onClose={() => setShowInvite(false)} />}
     </div>

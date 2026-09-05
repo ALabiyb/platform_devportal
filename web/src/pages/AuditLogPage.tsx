@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useAuditEvents, AuditEvent } from "@/lib/api";
-import { PageHeader } from "@/components/kit";
+import { PageHeader, TableRowSkeleton } from "@/components/kit";
 
 type Outcome = "Allowed" | "Denied";
 
@@ -163,7 +163,9 @@ export function AuditLogPage() {
         </div>
 
         {isLoading ? (
-          <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--faint)" }}>Loading events…</div>
+          Array.from({ length: 8 }).map((_, i) => (
+            <TableRowSkeleton key={i} gridTemplateColumns="140px 170px minmax(190px,1fr) minmax(160px,1fr) 100px 130px" minWidth={900} />
+          ))
         ) : filtered.length === 0 ? (
           <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--faint)" }}>
             {events.length === 0 ? "No audit events recorded yet." : "No events match these filters."}

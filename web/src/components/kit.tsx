@@ -9,6 +9,31 @@
 import { useEffect, useId, useRef } from "react";
 import { useTopBar } from "@/components/Layout";
 
+// ── Skeleton ────────────────────────────────────────────────────────────────
+// Loading placeholder — replaces the "Loading…"/"Loading X…" text every page
+// currently shows, with something that suggests the shape of what's coming
+// instead of a blank flash. Respects prefers-reduced-motion (see index.css).
+export function Skeleton({ width = "100%", height = 14, radius = 4, style }: {
+  width?: number | string; height?: number | string; radius?: number; style?: React.CSSProperties;
+}) {
+  return <span className="skeleton" style={{ width, height, borderRadius: radius, ...style }} />;
+}
+
+// One skeleton .tbl-row matching a real table's own gridTemplateColumns, so
+// the placeholder lines up with the columns it's about to be replaced by.
+export function TableRowSkeleton({ gridTemplateColumns, minWidth }: {
+  gridTemplateColumns: string; minWidth?: number;
+}) {
+  const count = gridTemplateColumns.trim().split(/\s+/).length;
+  return (
+    <div className="tbl-row" style={{ gridTemplateColumns, minWidth, alignItems: "center" }}>
+      {Array.from({ length: count }).map((_, i) => (
+        <Skeleton key={i} height={13} width={i === 0 ? "75%" : "45%"} />
+      ))}
+    </div>
+  );
+}
+
 // ── Button ──────────────────────────────────────────────────────────────────
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "sm" | "md" | "lg";

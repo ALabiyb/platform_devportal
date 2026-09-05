@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useApplications, useTeams, useProjects, useDashboard, DashboardActivityEvent } from "@/lib/api";
-import { PageHeader } from "@/components/kit";
+import { PageHeader, Skeleton } from "@/components/kit";
 
 // ── Status badge ──────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
@@ -59,6 +59,16 @@ function KpiCard({ label, value, delta, deltaGood, sub, extra }: {
       </div>
       {extra}
       {sub && <p style={{ margin: 0, fontSize: 12, color: "var(--faint)" }}>{sub}</p>}
+    </div>
+  );
+}
+
+function KpiCardSkeleton() {
+  return (
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
+      <Skeleton width={70} height={10} />
+      <Skeleton width={56} height={28} />
+      <Skeleton width={120} height={12} />
     </div>
   );
 }
@@ -144,7 +154,30 @@ export function DashboardPage() {
     : realActivity;
 
   if (appsLoading && !dashboard) {
-    return <div style={{ padding: 28, color: "var(--faint)", fontSize: 13 }}>Loading…</div>;
+    return (
+      <div style={{ padding: 28, maxWidth: 1400, display: "flex", flexDirection: "column", gap: 22 }}>
+        <div>
+          <Skeleton width={200} height={22} style={{ marginBottom: 8 }} />
+          <Skeleton width={320} height={13} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          {Array.from({ length: 5 }).map((_, i) => <KpiCardSkeleton key={i} />)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.7fr) minmax(280px,1fr)", gap: 16 }}>
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Skeleton width={16} height={16} radius={8} />
+                <Skeleton height={13} />
+              </div>
+            ))}
+          </div>
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={13} />)}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

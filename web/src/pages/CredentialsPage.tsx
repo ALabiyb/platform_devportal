@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useCredentials, useCreateCredential, useDeleteCredential, Credential } from "@/lib/api";
-import { PageHeader, Modal, FormField, Button, ConfirmDialog } from "@/components/kit";
+import { PageHeader, Modal, FormField, Button, ConfirmDialog, Skeleton } from "@/components/kit";
 import { useToast } from "@/components/toast";
 
 const PROVIDER_COLOR: Record<string, string> = {
@@ -195,7 +195,17 @@ export function CredentialsPage() {
       />
 
       {isLoading ? (
-        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading credentials…</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px,1fr))", gap: 14 }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="card" style={{ padding: 0 }}>
+              <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 12 }}>
+                <Skeleton width={32} height={32} radius={8} />
+                <div style={{ flex: 1 }}><Skeleton width="50%" height={14} /></div>
+              </div>
+              <div style={{ padding: "14px 18px" }}><Skeleton height={36} /></div>
+            </div>
+          ))}
+        </div>
       ) : creds.length === 0 ? (
         <div style={{ border: "1px dashed var(--line2)", borderRadius: 10, padding: 48, textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>No credentials yet</div>

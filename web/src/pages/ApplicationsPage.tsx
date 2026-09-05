@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useApplications, useApplicationServices, useProvisioningSteps, Application, Project, ProvisioningStep } from "@/lib/api";
-import { PageHeader } from "@/components/kit";
+import { PageHeader, Skeleton } from "@/components/kit";
 
 const LANG_COLOR: Record<string, string> = {
   maven: "#f87171", gradle: "#f87171", java: "#f87171",
@@ -266,7 +266,17 @@ export function ApplicationsPage() {
       </div>
 
       {isLoading ? (
-        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading applications…</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card" style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 18px", minWidth: 720 }}>
+              <Skeleton width={22} height={22} radius={6} />
+              <div style={{ flex: 1 }}><Skeleton width="40%" height={14} /></div>
+              <Skeleton width={80} height={13} />
+              <Skeleton width={40} height={13} />
+              <Skeleton width={90} height={20} radius={10} />
+            </div>
+          ))}
+        </div>
       ) : filtered.length === 0 ? (
         <div style={{ border: "1px dashed var(--line2)", borderRadius: 10, padding: 48, textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>

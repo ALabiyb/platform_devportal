@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useTeams, useTeamMembers, useCreateTeam, useUpdateTeam, useDeleteTeam, useAddTeamMember, useRemoveTeamMember, useUsers, Team, TeamMember, User } from "@/lib/api";
-import { PageHeader, Modal, FormField, Button, ConfirmDialog, EmptyState } from "@/components/kit";
+import { PageHeader, Modal, FormField, Button, ConfirmDialog, EmptyState, Skeleton } from "@/components/kit";
 import { useToast } from "@/components/toast";
 
 const TEAM_PALETTE = [
@@ -318,7 +318,18 @@ export function TeamsPage() {
         actions={<button className="btn btn-primary" onClick={() => setShowNewTeam(true)}>+ New team</button>}
       />
       {isLoading ? (
-        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading teams…</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="card" style={{ display: "grid", gridTemplateColumns: "34px minmax(0,1fr) 170px 130px 150px 20px", gap: 16, padding: "14px 18px", alignItems: "center" }}>
+              <Skeleton width={34} height={34} radius={8} />
+              <Skeleton width="35%" height={14} />
+              <Skeleton width={100} height={13} />
+              <Skeleton width={70} height={13} />
+              <Skeleton width={90} height={13} />
+              <span />
+            </div>
+          ))}
+        </div>
       ) : teams.length === 0 ? (
         <div style={{ border: "1px dashed var(--line2)", borderRadius: 10 }}>
           <EmptyState
