@@ -2,6 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState, useRef, useEffect } from "react";
 import { useUsers, useCurrentUser, useCreateUser, useUpdateUserRole, useDeactivateUser, User } from "@/lib/api";
+import { Modal, FormField, Button } from "@/components/kit";
 
 type DisplayRole = "Platform admin" | "Developer" | "Read only";
 
@@ -143,46 +144,33 @@ function InviteModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 440, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Invite user</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0 }}>×</button>
+    <Modal title="Invite user" onClose={onClose} maxWidth={440}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <FormField label="Display name">
+          <input className="field" placeholder="Jane Mwangi" value={displayName} onChange={e => setDisplayName(e.target.value)} autoFocus />
+        </FormField>
+        <FormField label="Email">
+          <input className="field" type="email" placeholder="jane@nexbridge.dev" value={email} onChange={e => setEmail(e.target.value)} />
+        </FormField>
+        <FormField label="Temporary password">
+          <input className="field" type="password" placeholder="Min 8 characters" value={password} onChange={e => setPassword(e.target.value)} />
+        </FormField>
+        <FormField label="Role">
+          <select className="field" value={role} onChange={e => setRole(e.target.value)}>
+            <option value="developer">Developer</option>
+            <option value="admin">Platform admin</option>
+            <option value="viewer">Read only</option>
+          </select>
+        </FormField>
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={createM.isPending} disabled={!email.trim() || !password.trim()}>
+            Create account
+          </Button>
         </div>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Display name</label>
-            <input className="field" placeholder="Jane Mwangi" value={displayName} onChange={e => setDisplayName(e.target.value)} autoFocus />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Email</label>
-            <input className="field" type="email" placeholder="jane@nexbridge.dev" value={email} onChange={e => setEmail(e.target.value)} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Temporary password</label>
-            <input className="field" type="password" placeholder="Min 8 characters" value={password} onChange={e => setPassword(e.target.value)} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Role</label>
-            <select className="field" value={role} onChange={e => setRole(e.target.value)}>
-              <option value="developer">Developer</option>
-              <option value="admin">Platform admin</option>
-              <option value="viewer">Read only</option>
-            </select>
-          </div>
-          {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={!email.trim() || !password.trim() || createM.isPending}>
-              {createM.isPending ? "Inviting…" : "Create account"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 

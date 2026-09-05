@@ -10,6 +10,7 @@ import {
   type Project,
 } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
+import { Modal, ConfirmDialog, FormField, Button } from "@/components/kit";
 
 function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; onNavigate: (id: string) => void }) {
   const [hover, setHover] = useState(false);
@@ -263,58 +264,38 @@ export function ApplicationDetailPage() {
 
       {/* Rename modal */}
       {showRename && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-[var(--panel)] border border-[var(--line)] rounded-[12px] p-6 w-[400px]">
-            <h3 className="text-[15px] font-semibold m-0 mb-4">Edit application</h3>
-            <form onSubmit={handleRename} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[12px] text-[var(--muted)]">Name</label>
-                <input autoFocus value={renameName} onChange={(e) => setRenameName(e.target.value)}
-                  className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-[inherit] focus:outline-none" />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[12px] text-[var(--muted)]">Description</label>
-                <input value={renameDesc} onChange={(e) => setRenameDesc(e.target.value)}
-                  className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-[inherit] focus:outline-none" />
-              </div>
-              {renameError && <p className="text-[11px] text-[var(--bad)] m-0">{renameError}</p>}
-              <div className="flex gap-2 mt-1">
-                <button type="submit" disabled={updateApp.isPending}
-                  className="flex-1 h-9 rounded-md bg-primary border-none text-white text-[13px] cursor-pointer disabled:opacity-50">
-                  {updateApp.isPending ? "Saving…" : "Save"}
-                </button>
-                <button type="button" onClick={() => setShowRename(false)}
-                  className="flex-1 h-9 rounded-md border border-[var(--line)] bg-transparent text-[var(--muted)] text-[13px] cursor-pointer">
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <Modal title="Edit application" onClose={() => setShowRename(false)}>
+          <form onSubmit={handleRename} className="flex flex-col gap-3">
+            <FormField label="Name">
+              <input autoFocus value={renameName} onChange={(e) => setRenameName(e.target.value)} className="field" />
+            </FormField>
+            <FormField label="Description">
+              <input value={renameDesc} onChange={(e) => setRenameDesc(e.target.value)} className="field" />
+            </FormField>
+            {renameError && <p className="text-[11px] text-[var(--bad)] m-0">{renameError}</p>}
+            <div className="flex gap-2 mt-1">
+              <Button type="submit" loading={updateApp.isPending} className="flex-1">Save</Button>
+              <Button type="button" variant="secondary" onClick={() => setShowRename(false)} className="flex-1">Cancel</Button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {/* Delete confirm modal */}
       {showDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-[var(--panel)] border border-[var(--line)] rounded-[12px] p-6 w-[380px]">
-            <h3 className="text-[15px] font-semibold m-0 mb-2">Archive application?</h3>
-            <p className="text-[13px] text-[var(--muted)] m-0 mb-5">
-              <strong className="text-[var(--text)]">{app.name}</strong> will be archived and hidden from the
-              active list. Existing services are not deleted.
-            </p>
-            {deleteError && <p className="text-[12px] text-[var(--bad)] m-0 mb-3">{deleteError}</p>}
-            <div className="flex gap-2">
-              <button onClick={handleDelete} disabled={deleteApp.isPending}
-                className="flex-1 h-9 rounded-md bg-[var(--bad)] border-none text-white text-[13px] cursor-pointer disabled:opacity-50">
-                {deleteApp.isPending ? "Archiving…" : "Archive"}
-              </button>
-              <button onClick={() => setShowDelete(false)}
-                className="flex-1 h-9 rounded-md border border-[var(--line)] bg-transparent text-[var(--muted)] text-[13px] cursor-pointer">
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="Archive application?"
+          message={<>
+            <strong className="text-[var(--text)]">{app.name}</strong> will be archived and hidden from the
+            active list. Existing services are not deleted.
+          </>}
+          confirmLabel="Archive"
+          danger
+          isPending={deleteApp.isPending}
+          error={deleteError}
+          onConfirm={handleDelete}
+          onCancel={() => setShowDelete(false)}
+        />
       )}
 
       <div className="grid gap-6" style={{ gridTemplateColumns: "1fr 340px" }}>

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useApplications, useApplicationServices, useProvisioningSteps, Application, Project, ProvisioningStep } from "@/lib/api";
+import { PageHeader } from "@/components/kit";
 
 const LANG_COLOR: Record<string, string> = {
   maven: "#f87171", gradle: "#f87171", java: "#f87171",
@@ -246,13 +247,11 @@ export function ApplicationsPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1240, display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <h1 className="page-h1">Applications</h1>
-          <p className="page-sub">{apps.length} applications · click a row to expand services</p>
-        </div>
-        <Link to="/applications/new" className="btn btn-primary" style={{ textDecoration: "none" }}>+ New application</Link>
-      </div>
+      <PageHeader
+        title="Applications"
+        subtitle={`${apps.length} applications · click a row to expand services`}
+        actions={<Link to="/applications/new" className="btn btn-primary" style={{ textDecoration: "none" }}>+ New application</Link>}
+      />
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input className="field" style={{ maxWidth: 230 }} placeholder="Filter by name"

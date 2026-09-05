@@ -9,33 +9,7 @@ import {
   useClusterServices, useUpsertClusterService,
   Cluster, EnvironmentProfile, LanguageProfile, ManifestTemplate, ClusterPlatformService,
 } from "@/lib/api";
-
-// ── Generic Modal ─────────────────────────────────────────────────────────────
-function Modal({ title, onClose, children, maxWidth = 480 }: { title: string; onClose: () => void; children: React.ReactNode; maxWidth?: number }) {
-  return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{title}</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>{label}</label>
-      {children}
-    </div>
-  );
-}
+import { Modal, FormField as Field } from "@/components/kit";
 
 // ── Register Cluster Modal ─────────────────────────────────────────────────────
 function RegisterClusterModal({ onClose }: { onClose: () => void }) {
