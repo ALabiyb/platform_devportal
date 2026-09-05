@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useTeams, useTeamMembers, useCreateTeam, useUpdateTeam, useDeleteTeam, useAddTeamMember, useRemoveTeamMember, useUsers, Team, TeamMember, User } from "@/lib/api";
-import { PageHeader, Modal, FormField, Button, ConfirmDialog } from "@/components/kit";
+import { PageHeader, Modal, FormField, Button, ConfirmDialog, EmptyState } from "@/components/kit";
 
 const TEAM_PALETTE = [
   "#f87171","#38bdf8","#c084fc","#fbbf24","#4ade80","#94a3b8","#fb923c","#a78bfa",
@@ -313,10 +313,12 @@ export function TeamsPage() {
       {isLoading ? (
         <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading teams…</div>
       ) : teams.length === 0 ? (
-        <div style={{ border: "1px dashed var(--line2)", borderRadius: 10, padding: 48, textAlign: "center" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>No teams yet</div>
-          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16 }}>Create a team to group developers and assign applications.</div>
-          <button className="btn btn-primary" onClick={() => setShowNewTeam(true)}>Create first team</button>
+        <div style={{ border: "1px dashed var(--line2)", borderRadius: 10 }}>
+          <EmptyState
+            title="No teams yet"
+            description="Create a team to group developers and assign applications."
+            action={<Button onClick={() => setShowNewTeam(true)}>Create first team</Button>}
+          />
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

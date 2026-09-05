@@ -10,7 +10,7 @@ import {
   type Project,
 } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
-import { Modal, ConfirmDialog, FormField, Button } from "@/components/kit";
+import { Modal, ConfirmDialog, FormField, Button, EmptyState } from "@/components/kit";
 
 function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; onNavigate: (id: string) => void }) {
   const [hover, setHover] = useState(false);
@@ -312,15 +312,16 @@ export function ApplicationDetailPage() {
           </div>
 
           {!services?.length ? (
-            <div className="border border-dashed border-[var(--line)] rounded-[10px] py-12 text-center">
-              <p className="text-[14px] font-medium m-0 mb-1">No services yet</p>
-              <p className="text-[12px] text-[var(--muted)] m-0 mb-4">Add your first microservice to start provisioning.</p>
-              <button
-                onClick={() => navigate(`/applications/${appId}/services/new`)}
-                className="h-9 px-4 rounded-md bg-primary border-none text-white text-[13px] cursor-pointer"
-              >
-                + Add service
-              </button>
+            <div className="border border-dashed border-[var(--line)] rounded-[10px]">
+              <EmptyState
+                title="No services yet"
+                description="Add your first microservice to start provisioning."
+                action={
+                  <Button onClick={() => navigate(`/applications/${appId}/services/new`)}>
+                    + Add service
+                  </Button>
+                }
+              />
             </div>
           ) : (
             <div className="flex flex-col gap-3">
