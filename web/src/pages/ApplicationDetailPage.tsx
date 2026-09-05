@@ -17,6 +17,7 @@ function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; 
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(svc.name);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const renameService = useRenameService(appId, svc.id);
   const deleteService = useDeleteService(appId, svc.id);
@@ -29,8 +30,13 @@ function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; 
   }
 
   async function handleDelete() {
-    await deleteService.mutateAsync();
-    setConfirmDelete(false);
+    setDeleteError("");
+    try {
+      await deleteService.mutateAsync();
+      setConfirmDelete(false);
+    } catch (err) {
+      setDeleteError(err instanceof ApiError ? err.message : "Failed to archive service.");
+    }
   }
 
   return (
@@ -56,20 +62,6 @@ function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; 
             Cancel
           </button>
         </form>
-      ) : confirmDelete ? (
-        <div className="flex items-center gap-3">
-          <p className="text-[13px] text-[var(--text)] m-0 flex-1">
-            Archive <strong>{svc.name}</strong>?
-          </p>
-          <button onClick={handleDelete} disabled={deleteService.isPending}
-            className="h-8 px-3 rounded bg-[var(--bad)] border-none text-white text-[12px] cursor-pointer disabled:opacity-50">
-            {deleteService.isPending ? "…" : "Archive"}
-          </button>
-          <button onClick={() => setConfirmDelete(false)}
-            className="h-8 px-2 rounded border border-[var(--line)] bg-transparent text-[var(--muted)] text-[12px] cursor-pointer">
-            Cancel
-          </button>
-        </div>
       ) : (
         <div className="flex items-center justify-between">
           <div
@@ -100,6 +92,18 @@ function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; 
             <span className="text-[12px] text-[var(--accent)] cursor-pointer" onClick={() => onNavigate(svc.id)}>View →</span>
           </div>
         </div>
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Archive service?"
+          message={<>Archive <strong className="text-[var(--text)]">{svc.name}</strong>?</>}
+          confirmLabel="Archive"
+          danger
+          isPending={deleteService.isPending}
+          error={deleteError}
+          onConfirm={handleDelete}
+          onCancel={() => { setConfirmDelete(false); setDeleteError(""); }}
+        />
       )}
     </div>
   );
