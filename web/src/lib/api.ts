@@ -52,6 +52,8 @@ export interface Project {
   application_id: string;
   git_repo_url?: string;
   created_at: string;
+  port: number;
+  service_kind: string;
 }
 
 export interface CreateProjectResponse {

@@ -16,11 +16,18 @@ import {
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface WizardState {
   name: string; appId: string; assigneeId: string; description: string;
+  serviceKind: string;
   buildTool: string; port: string; liveness: string; readiness: string; tier: string;
   infra: string[]; deps: string[]; // deps stores service IDs
 }
 
 const STEPS = ["Identity","Build tool","Runtime","Infra","Deps","Review","Provision"] as const;
+
+const SERVICE_KINDS = [
+  { id: "backend",  label: "Backend",  desc: "HTTP/gRPC API, worker with a health endpoint" },
+  { id: "frontend", label: "Frontend", desc: "Static SPA served behind nginx" },
+  { id: "worker",   label: "Worker",   desc: "Background/queue consumer, no inbound traffic" },
+] as const;
 
 const BUILD_TOOLS = [
   { id: "maven",  lang: "Java 21",       subtitle: "Spring Boot",       image: "temurin:21-jre",     cmd: "mvn -B package",  color: "#f87171" },
@@ -127,6 +134,19 @@ function StepIdentity({ state, onChange, apps, users }: {
         <input className="field field-lg field-mono" placeholder="ledger-reconciler" value={state.name}
           onChange={e => onChange({ name: e.target.value })} style={{ maxWidth: 360 }} />
         <div style={{ fontSize: 11, color: "var(--faint)", fontFamily: "JetBrains Mono,monospace", marginTop: 5 }}>lowercase, hyphens, ≤ 40 chars</div>
+      </div>
+      <div>
+        <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 8 }}>Service kind</label>
+        <div className="segmented" style={{ width: "fit-content" }}>
+          {SERVICE_KINDS.map(k => (
+            <button key={k.id} type="button" className={state.serviceKind === k.id ? "active" : ""} onClick={() => onChange({ serviceKind: k.id })} title={k.desc}>
+              {k.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 6 }}>
+          {SERVICE_KINDS.find(k => k.id === state.serviceKind)?.desc}
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 480 }}>
         <div>
@@ -316,7 +336,7 @@ function StepDeps({ state, onChange, services }: {
                 <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, color: "var(--text)" }}>{s.name}</div>
                 <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 1 }}>{s.build_tool}</div>
               </div>
-              <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--muted)" }}>HTTP</div>
+              <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--muted)" }}>:{s.port || 8080}</div>
             </div>
           );
         })}
@@ -364,12 +384,17 @@ function StepReview({ state, onJump, services, apps, errorMsg }: {
   const bt = BUILD_TOOLS.find(b => b.id === state.buildTool);
   const ti = TIERS.find(t => t.id === state.tier);
   const appName = apps.find(a => a.id === state.appId)?.name ?? state.appId;
-  const depNames = state.deps.map(id => services.find(s => s.id === id)?.name ?? id).join(", ");
+  const depNames = state.deps.map(id => {
+    const s = services.find(s => s.id === id);
+    return s ? `${s.name}:${s.port || 8080}` : id;
+  }).join(", ");
+  const kindLabel = SERVICE_KINDS.find(k => k.id === state.serviceKind)?.label ?? state.serviceKind;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <ReviewSection title="Identity" step={0} onEdit={() => onJump(0)}>
         <KV k="Name"        v={state.name || "—"} />
+        <KV k="Kind"        v={kindLabel} />
         <KV k="Application" v={appName} />
         <KV k="Assignee"    v={state.assigneeId || "—"} />
       </ReviewSection>
@@ -530,6 +555,7 @@ function WizardFooter({ step, canContinue, onBack, onNext, provisioning, allDone
 // ── Main wizard ───────────────────────────────────────────────────────────────
 const DEFAULT_STATE: WizardState = {
   name: "", appId: "", assigneeId: "", description: "",
+  serviceKind: "backend",
   buildTool: "maven", port: "8080", liveness: "/actuator/health/liveness",
   readiness: "/actuator/health/readiness", tier: "medium",
   infra: [], deps: [],
@@ -571,11 +597,14 @@ export function CreateServicePage() {
           build_tool: state.buildTool,
           port: parseInt(state.port) || 8080,
           health_path: state.liveness || "/healthz",
-          service_kind: "backend",
+          service_kind: state.serviceKind,
           notification_email: "",
           app_timezone: "Africa/Dar_es_Salaam",
           infra_requirements: state.infra.map(type => ({ service_type: type, config: {} })),
-          talks_to: state.deps.map(id => ({ project_id: id, port: 80 })),
+          talks_to: state.deps.map(id => ({
+            project_id: id,
+            port: appServices.find(s => s.id === id)?.port || 80,
+          })),
           members: state.assigneeId ? [{ user_id: state.assigneeId, role: "developer" }] : [],
         });
 
