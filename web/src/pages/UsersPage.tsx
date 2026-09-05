@@ -50,6 +50,7 @@ function UserActionsMenu({ user, onClose }: { user: User; onClose: () => void })
   const ref = useRef<HTMLDivElement>(null);
   const roleM = useUpdateUserRole();
   const deactivateM = useDeactivateUser();
+  const [error, setError] = useState("");
 
   useEffect(() => {
     function handle(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); }
@@ -58,13 +59,23 @@ function UserActionsMenu({ user, onClose }: { user: User; onClose: () => void })
   }, [onClose]);
 
   async function changeRole(role: string) {
-    await roleM.mutateAsync({ userId: user.id, role });
-    onClose();
+    setError("");
+    try {
+      await roleM.mutateAsync({ userId: user.id, role });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to change role.");
+    }
   }
 
   async function handleSuspend() {
-    await deactivateM.mutateAsync(user.id);
-    onClose();
+    setError("");
+    try {
+      await deactivateM.mutateAsync(user.id);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update status.");
+    }
   }
 
   const currentApiRole = user.role;
@@ -103,6 +114,9 @@ function UserActionsMenu({ user, onClose }: { user: User; onClose: () => void })
       >
         {user.is_active ? "Suspend user" : "Reactivate user"}
       </button>
+      {error && (
+        <div style={{ padding: "8px 12px 4px", fontSize: 11.5, color: "var(--bad)", maxWidth: 220 }}>{error}</div>
+      )}
     </div>
   );
 }
