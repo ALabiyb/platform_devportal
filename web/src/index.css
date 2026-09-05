@@ -327,6 +327,17 @@
 }
 .tab-btn:hover:not(.active) { color: var(--muted); }
 
+/* App shell sidebar — icon-only rail below 900px instead of forcing the
+   whole app to a fixed 1024px minimum width (which just clipped/scrolled
+   the entire page on anything narrower, including a laptop in a split view). */
+.sidebar { width: 220px; }
+.sidebar-label { display: block; }
+@media (max-width: 900px) {
+  .sidebar { width: 60px; }
+  .sidebar-label { display: none; }
+  .sidebar-nav-item { justify-content: center; }
+}
+
 /* Avatar */
 .avatar {
   border-radius: 50%; background: var(--card);

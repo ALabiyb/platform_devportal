@@ -64,15 +64,16 @@ function NavItem({ to, icon, label, end }: { to: string; icon: string; label: st
     <NavLink
       to={to}
       end={end}
+      title={label}
       className={({ isActive }) => [
-        "flex items-center gap-[10px] h-8 px-[10px] rounded-[7px] text-[13px] no-underline transition-colors",
+        "sidebar-nav-item flex items-center gap-[10px] h-8 px-[10px] rounded-[7px] text-[13px] no-underline transition-colors",
         isActive
           ? "font-semibold text-[var(--accent)] bg-[var(--accent-soft)]"
           : "font-medium text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--text)]",
       ].join(" ")}
     >
       <SvgIcon html={icon} />
-      {label}
+      <span className="sidebar-label">{label}</span>
     </NavLink>
   );
 }
@@ -80,7 +81,7 @@ function NavItem({ to, icon, label, end }: { to: string; icon: string; label: st
 function NavGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <p style={{
+      <p className="sidebar-label" style={{
         fontSize: 10, fontWeight: 600, letterSpacing: ".1em",
         textTransform: "uppercase", color: "var(--faint)",
         padding: "6px 10px", margin: 0,
@@ -176,12 +177,12 @@ export function Layout() {
       setTopBar: opts => setTopBarState(opts),
     }}>
       <div style={{
-        display: "flex", height: "100vh", minWidth: 1024,
+        display: "flex", height: "100vh",
         background: "var(--bg)", color: "var(--text)",
       }}>
-        {/* ── Sidebar 220px ── */}
-        <aside style={{
-          width: 220, flexShrink: 0, display: "flex", flexDirection: "column",
+        {/* ── Sidebar — 220px, collapses to a 60px icon rail below 900px ── */}
+        <aside className="sidebar" style={{
+          flexShrink: 0, display: "flex", flexDirection: "column",
           background: "var(--panel)", borderRight: "1px solid var(--line)",
           position: "sticky", top: 0, height: "100vh",
         }}>
@@ -193,7 +194,7 @@ export function Layout() {
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 13, fontWeight: 700, flexShrink: 0,
             }}>N</div>
-            <div>
+            <div className="sidebar-label">
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", lineHeight: 1.2 }}>DevPortal</div>
               <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: ".04em", color: "var(--faint)", lineHeight: 1 }}>NEXBRIDGE</div>
             </div>
@@ -218,7 +219,7 @@ export function Layout() {
           </nav>
 
           {/* Footer */}
-          <div style={{ borderTop: "1px solid var(--line)", padding: 10, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ borderTop: "1px solid var(--line)", padding: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <div style={{
               width: 28, height: 28, borderRadius: "50%",
               background: "var(--card)", border: "1px solid var(--line2)",
@@ -227,7 +228,7 @@ export function Layout() {
             }}>
               {userInitials}
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sidebar-label" style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {displayName}
               </div>
