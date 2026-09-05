@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useTeams, useTeamMembers, useCreateTeam, useUpdateTeam, useDeleteTeam, useAddTeamMember, useRemoveTeamMember, useUsers, Team, TeamMember, User } from "@/lib/api";
 import { PageHeader, Modal, FormField, Button, ConfirmDialog, EmptyState } from "@/components/kit";
+import { useToast } from "@/components/toast";
 
 const TEAM_PALETTE = [
   "#f87171","#38bdf8","#c084fc","#fbbf24","#4ade80","#94a3b8","#fb923c","#a78bfa",
@@ -100,6 +101,7 @@ function TeamSettingsModal({ team, onClose }: { team: Team; onClose: () => void 
   const [name, setName] = useState(team.name);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState("");
+  const { show } = useToast();
 
   async function handleRename(e: React.FormEvent) {
     e.preventDefault();
@@ -111,8 +113,13 @@ function TeamSettingsModal({ team, onClose }: { team: Team; onClose: () => void 
 
   async function handleDelete() {
     setError("");
-    try { await deleteM.mutateAsync(); onClose(); }
-    catch (err: unknown) { setError(err instanceof Error ? err.message : "Failed to delete team."); }
+    try {
+      await deleteM.mutateAsync();
+      show({ tone: "ok", message: `${team.name} deleted.` });
+      onClose();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to delete team.");
+    }
   }
 
   return (

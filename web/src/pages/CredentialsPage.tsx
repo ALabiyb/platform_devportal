@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useCredentials, useCreateCredential, useDeleteCredential, Credential } from "@/lib/api";
 import { PageHeader, Modal, FormField, Button, ConfirmDialog } from "@/components/kit";
+import { useToast } from "@/components/toast";
 
 const PROVIDER_COLOR: Record<string, string> = {
   jenkins:       "#f87171",
@@ -40,6 +41,7 @@ function AddCredentialModal({ onClose }: { onClose: () => void }) {
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [error, setError] = useState("");
+  const { show } = useToast();
 
   const KNOWN_PROVIDERS = ["jenkins","harbor","gitea","argocd","vault","defectdojo","dependencytrack","github","gitlab","docker"];
   const isCustom = providerType === "__custom__";
@@ -51,6 +53,7 @@ function AddCredentialModal({ onClose }: { onClose: () => void }) {
     setError("");
     try {
       await createM.mutateAsync({ provider_type: finalType, label: label.trim(), token });
+      show({ tone: "ok", message: `${label.trim()} added.` });
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to add credential.");
@@ -101,11 +104,13 @@ function CredCard({ cred }: { cred: Credential }) {
   const [error, setError] = useState("");
   const deleteM = useDeleteCredential();
   const color = providerColor(cred.provider_type);
+  const { show } = useToast();
 
   async function handleDelete() {
     setError("");
     try {
       await deleteM.mutateAsync(cred.id);
+      show({ tone: "ok", message: `${cred.label} revoked.` });
       setConfirming(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to revoke credential.");

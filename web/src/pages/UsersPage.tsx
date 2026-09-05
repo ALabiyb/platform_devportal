@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useUsers, useCurrentUser, useCreateUser, useUpdateUserRole, useDeactivateUser, User } from "@/lib/api";
 import { Modal, FormField, Button, PageHeader } from "@/components/kit";
+import { useToast } from "@/components/toast";
 
 type DisplayRole = "Platform admin" | "Developer" | "Read only";
 
@@ -52,6 +53,7 @@ function UserActionsMenu({ user, onClose }: { user: User; onClose: () => void })
   const roleM = useUpdateUserRole();
   const deactivateM = useDeactivateUser();
   const [error, setError] = useState("");
+  const { show } = useToast();
 
   useEffect(() => {
     function handle(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); }
@@ -63,6 +65,7 @@ function UserActionsMenu({ user, onClose }: { user: User; onClose: () => void })
     setError("");
     try {
       await roleM.mutateAsync({ userId: user.id, role });
+      show({ tone: "ok", message: `${user.display_name || user.email}'s role changed to ${mapRole(role)}.` });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to change role.");
@@ -73,6 +76,7 @@ function UserActionsMenu({ user, onClose }: { user: User; onClose: () => void })
     setError("");
     try {
       await deactivateM.mutateAsync(user.id);
+      show({ tone: "ok", message: `${user.display_name || user.email} ${user.is_active ? "suspended" : "reactivated"}.` });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update status.");
@@ -130,6 +134,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("developer");
   const [error, setError] = useState("");
+  const { show } = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -137,6 +142,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
     setError("");
     try {
       await createM.mutateAsync({ display_name: displayName.trim() || email.split("@")[0], email: email.trim(), password, role });
+      show({ tone: "ok", message: `${email.trim()} invited.` });
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to invite user.");

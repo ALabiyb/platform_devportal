@@ -7,6 +7,7 @@ import { queryClient } from "@/lib/queryClient";
 import { fetchBrand, applyBrandCSS } from "@/lib/branding";
 import { BrandContext } from "@/contexts/BrandContext";
 import { Router } from "@/router";
+import { ToastProvider } from "@/components/toast";
 import "@/index.css";
 
 // Fetch branding before the first render so CSS custom properties are applied
@@ -19,7 +20,9 @@ async function bootstrap() {
     <React.StrictMode>
       <BrandContext.Provider value={brand}>
         <QueryClientProvider client={queryClient}>
-          <Router />
+          <ToastProvider>
+            <Router />
+          </ToastProvider>
         </QueryClientProvider>
       </BrandContext.Provider>
     </React.StrictMode>
