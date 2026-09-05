@@ -6,17 +6,18 @@ import {
   useClusters, useCreateCluster, useEnvironmentProfiles, useUpdateEnvironmentProfile,
   useLanguageProfiles, useUpsertLanguageProfile,
   useManifestTemplates, useUpsertManifestTemplate,
-  Cluster, EnvironmentProfile, LanguageProfile, ManifestTemplate,
+  useClusterServices, useUpsertClusterService,
+  Cluster, EnvironmentProfile, LanguageProfile, ManifestTemplate, ClusterPlatformService,
 } from "@/lib/api";
 
 // ── Generic Modal ─────────────────────────────────────────────────────────────
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function Modal({ title, onClose, children, maxWidth = 480 }: { title: string; onClose: () => void; children: React.ReactNode; maxWidth?: number }) {
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
       background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
     }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 480, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
+      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{title}</h2>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
@@ -286,6 +287,129 @@ function EnvProfileEditModal({ profile, onClose }: { profile: EnvironmentProfile
 }
 
 // ── Clusters tab ──────────────────────────────────────────────────────────────
+// ── Cluster platform services ──────────────────────────────────────────────────
+const ALL_SERVICE_TYPES = ["cnpg", "kafka", "minio", "redis", "rabbitmq", "vault", "gateway"];
+
+const SVC_LABELS: Record<string, string> = {
+  cnpg:     "CloudNativePG (Postgres)",
+  kafka:    "Kafka",
+  minio:    "MinIO (Object Storage)",
+  redis:    "Redis",
+  rabbitmq: "RabbitMQ",
+  vault:    "HashiCorp Vault",
+  gateway:  "Gateway API",
+};
+
+// Which config fields to show per service type.
+const SVC_FIELDS: Record<string, string[]> = {
+  cnpg:     ["cluster_name", "namespace", "superuser_secret"],
+  kafka:    ["brokers", "admin_secret_ref", "admin_secret_namespace"],
+  minio:    ["endpoint", "admin_secret_ref", "admin_secret_namespace"],
+  redis:    ["host", "port", "secret_ref", "secret_namespace"],
+  rabbitmq: ["host", "port", "secret_ref", "secret_namespace"],
+  vault:    ["addr", "mount", "auth_mount", "namespace"],
+  gateway:  ["name", "namespace", "section_name", "tls_secret", "domain"],
+};
+
+function ClusterServicesModal({ cluster, onClose }: { cluster: Cluster; onClose: () => void }) {
+  const { data: svcs = [], isLoading } = useClusterServices(cluster.id);
+  const [selected, setSelected] = useState(ALL_SERVICE_TYPES[0]);
+  const [enabled, setEnabled] = useState(false);
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const upsert = useUpsertClusterService(cluster.id, selected);
+
+  function selectService(type: string) {
+    setSelected(type);
+    setError("");
+    setSaved(false);
+    const existing = svcs.find((s: ClusterPlatformService) => s.service_type === type);
+    setEnabled(existing?.enabled ?? false);
+    setFields(existing?.config ?? {});
+  }
+
+  async function handleSave() {
+    setError("");
+    setSaved(false);
+    try {
+      await upsert.mutateAsync({ enabled, config: fields });
+      setSaved(true);
+    } catch {
+      setError("Failed to save service config.");
+    }
+  }
+
+  const fieldNames = SVC_FIELDS[selected] ?? [];
+
+  return (
+    <Modal title={`Platform services — ${cluster.display_name}`} onClose={onClose} maxWidth={680}>
+      {isLoading ? (
+        <p style={{ fontSize: 13, color: "var(--faint)" }}>Loading…</p>
+      ) : (
+        <div style={{ display: "flex", gap: 16 }}>
+          <div style={{ width: 168, display: "flex", flexDirection: "column", gap: 2 }}>
+            {ALL_SERVICE_TYPES.map((type) => {
+              const existing = svcs.find((s: ClusterPlatformService) => s.service_type === type);
+              const isSelected = selected === type;
+              return (
+                <button
+                  key={type}
+                  onClick={() => selectService(type)}
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    justifyContent: "flex-start", gap: 8, textAlign: "left",
+                    background: isSelected ? "var(--accent-soft)" : "transparent",
+                    color: isSelected ? "var(--accent)" : "var(--muted)",
+                  }}
+                >
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{type}</span>
+                  {existing?.enabled && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ok)", flexShrink: 0 }} />}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{SVC_LABELS[selected]}</p>
+                <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--faint)" }}>
+                  Connection details for {cluster.display_name}.
+                </p>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
+                <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} style={{ accentColor: "#0ea5e9", width: 15, height: 15 }} />
+                Enabled
+              </label>
+            </div>
+
+            {fieldNames.map((field) => (
+              <Field key={field} label={field.replace(/_/g, " ")}>
+                <input
+                  className="field field-mono"
+                  value={fields[field] ?? ""}
+                  onChange={e => setFields(prev => ({ ...prev, [field]: e.target.value }))}
+                  placeholder={field}
+                />
+              </Field>
+            ))}
+
+            {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+            {saved && <p style={{ margin: 0, fontSize: 12, color: "var(--ok)" }}>Saved.</p>}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={upsert.isPending}>
+                {upsert.isPending ? "Saving…" : "Save service config"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function clusterStatusBadge(s: string) {
   if (s === "active" || s === "healthy") return <span className="badge badge-success">Healthy</span>;
   if (s === "degraded") return <span className="badge badge-warn">Degraded</span>;
@@ -295,11 +419,12 @@ function clusterStatusBadge(s: string) {
 
 function ClustersTab({ onRegister }: { onRegister: () => void }) {
   const { data: clusters = [], isLoading } = useClusters();
+  const [configCluster, setConfigCluster] = useState<Cluster | null>(null);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="tbl-wrap">
-        <div className="tbl-head" style={{ gridTemplateColumns: "minmax(0,1.3fr) 100px minmax(200px,1fr) 130px" }}>
-          <div>Cluster</div><div>Environment</div><div>API Endpoint</div><div>Status</div>
+        <div className="tbl-head" style={{ gridTemplateColumns: "minmax(0,1.3fr) 100px minmax(200px,1fr) 130px 110px" }}>
+          <div>Cluster</div><div>Environment</div><div>API Endpoint</div><div>Status</div><div></div>
         </div>
         {isLoading ? (
           <div style={{ padding: "20px 18px", fontSize: 13, color: "var(--faint)" }}>Loading clusters…</div>
@@ -309,7 +434,7 @@ function ClustersTab({ onRegister }: { onRegister: () => void }) {
             <button className="btn btn-primary btn-sm" onClick={onRegister}>Register your first cluster</button>
           </div>
         ) : clusters.map((c: Cluster) => (
-          <div key={c.id} className="tbl-row" style={{ gridTemplateColumns: "minmax(0,1.3fr) 100px minmax(200px,1fr) 130px" }}>
+          <div key={c.id} className="tbl-row" style={{ gridTemplateColumns: "minmax(0,1.3fr) 100px minmax(200px,1fr) 130px 110px" }}>
             <div>
               <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>
                 {c.display_name || c.name}
@@ -327,9 +452,13 @@ function ClustersTab({ onRegister }: { onRegister: () => void }) {
               {c.api_endpoint}
             </div>
             <div>{clusterStatusBadge(c.status)}</div>
+            <div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setConfigCluster(c)}>Configure</button>
+            </div>
           </div>
         ))}
       </div>
+      {configCluster && <ClusterServicesModal cluster={configCluster} onClose={() => setConfigCluster(null)} />}
     </div>
   );
 }
