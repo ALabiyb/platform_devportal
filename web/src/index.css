@@ -344,6 +344,16 @@
 }
 .page-sub { font-size: 13px; color: var(--muted); margin: 0; }
 
+/* Back link — detail-page nav-up, one consistent style instead of the
+   square-icon-button / plain-text-link variants each page invented. */
+.back-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted); text-decoration: none;
+  transition: color .12s ease; background: none; border: none;
+  padding: 0; cursor: pointer; font-family: inherit;
+}
+.back-link:hover { color: var(--text); }
+
 /* Overline label */
 .overline {
   font-size: 10.5px; font-weight: 600; letter-spacing: .08em;

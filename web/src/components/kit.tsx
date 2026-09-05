@@ -7,7 +7,20 @@
 // exists somewhere in the app; this file just stops each page from
 // re-implementing the same button/modal/badge/empty-state markup by hand.
 import { useEffect, useId, useRef } from "react";
+import { Link } from "react-router-dom";
 import { useTopBar } from "@/components/Layout";
+
+// ── BackLink ────────────────────────────────────────────────────────────────
+// Detail-page nav-up. Was 4 different implementations across pages: a
+// bordered 28px square "←" button (no label, no aria-label either), a plain
+// text link, and variations on both.
+export function BackLink({ to, label }: { to: string; label: string }) {
+  return (
+    <Link to={to} className="back-link">
+      <span aria-hidden="true">←</span> {label}
+    </Link>
+  );
+}
 
 // ── Skeleton ────────────────────────────────────────────────────────────────
 // Loading placeholder — replaces the "Loading…"/"Loading X…" text every page

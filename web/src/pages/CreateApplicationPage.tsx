@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCreateApplication, useUsers, User, apiFetch } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
+import { BackLink } from "@/components/kit";
 
 export function CreateApplicationPage() {
   const navigate = useNavigate();
@@ -79,12 +80,7 @@ export function CreateApplicationPage() {
 
   return (
     <div className="p-8 max-w-[560px]">
-      <button
-        onClick={() => navigate("/applications")}
-        className="text-[12px] text-[var(--muted)] no-underline hover:text-[var(--text)] bg-transparent border-none cursor-pointer mb-6 block"
-      >
-        ← Back to Applications
-      </button>
+      <div className="mb-6"><BackLink to="/applications" label="Back to Applications" /></div>
 
       <div className="border border-[var(--line)] bg-[var(--panel)] rounded-[12px] p-7">
         <div className="flex items-center gap-3 mb-5">

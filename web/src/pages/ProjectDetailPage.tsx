@@ -2,6 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { BackLink } from "@/components/kit";
 import { Download } from "lucide-react";
 import { useProject, useProvisioningSteps, useEnvironments, useUpdateService, useReprovisionService } from "@/lib/api";
 
@@ -339,12 +340,7 @@ export function ProjectDetailPage() {
   return (
     <div className="p-8 max-w-[1200px]">
       {/* Header */}
-      <Link
-        to={project.application_id ? `/applications/${project.application_id}` : "/"}
-        className="text-[12px] text-[var(--muted)] no-underline hover:text-[var(--text)]"
-      >
-        ← Application
-      </Link>
+      <BackLink to={project.application_id ? `/applications/${project.application_id}` : "/"} label="Application" />
       <div className="flex items-center gap-3 mt-3 mb-1">
         <h1 className="text-[24px] font-bold tracking-tight m-0">{project.name}</h1>
         <Badge status={project.status} />

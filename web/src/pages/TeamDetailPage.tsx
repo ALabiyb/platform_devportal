@@ -1,10 +1,10 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useTeam, useTeamMembers, useAddTeamMember, useRemoveTeamMember, useUsers } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
-import { ConfirmDialog } from "@/components/kit";
+import { ConfirmDialog, BackLink } from "@/components/kit";
 
 function RoleChip({ label, variant }: { label: string; variant: "org" | "team" }) {
   const colors: Record<string, { fg: string; bg: string }> = {
@@ -34,7 +34,6 @@ function RoleChip({ label, variant }: { label: string; variant: "org" | "team" }
 
 export function TeamDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
 
   const { data: team, isLoading: teamLoading } = useTeam(id ?? "");
   const { data: members, isLoading: membersLoading } = useTeamMembers(id ?? "");
@@ -84,12 +83,7 @@ export function TeamDetailPage() {
     return (
       <div className="p-8">
         <p className="text-[14px] text-[var(--bad)]">Team not found.</p>
-        <button
-          onClick={() => navigate("/teams")}
-          className="mt-3 text-[13px] text-[var(--accent)] underline bg-transparent border-none cursor-pointer"
-        >
-          ← Back to Teams
-        </button>
+        <BackLink to="/teams" label="Back to Teams" />
       </div>
     );
   }
@@ -97,14 +91,9 @@ export function TeamDetailPage() {
   return (
     <div className="p-8 max-w-[860px]">
       {/* Header */}
-      <div className="flex items-start justify-between mb-7">
+      <BackLink to="/teams" label="Teams" />
+      <div className="flex items-start justify-between mb-7 mt-3">
         <div className="flex items-start gap-3">
-          <button
-            onClick={() => navigate("/teams")}
-            className="mt-0.5 h-7 w-7 flex items-center justify-center rounded border border-[var(--line)] bg-transparent text-[var(--muted)] cursor-pointer hover:border-primary/50"
-          >
-            ←
-          </button>
           <div>
             <h1 className="text-[22px] font-bold tracking-tight m-0 mb-0.5">{team.name}</h1>
             <p className="text-[12px] text-[var(--muted)] m-0 font-mono">{team.slug}</p>

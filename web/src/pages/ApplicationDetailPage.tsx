@@ -10,7 +10,7 @@ import {
   type Project,
 } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
-import { Modal, ConfirmDialog, FormField, Button, EmptyState } from "@/components/kit";
+import { Modal, ConfirmDialog, FormField, Button, EmptyState, BackLink } from "@/components/kit";
 
 function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; onNavigate: (id: string) => void }) {
   const [hover, setHover] = useState(false);
@@ -218,21 +218,16 @@ export function ApplicationDetailPage() {
   if (!app) return (
     <div className="p-8">
       <p className="text-[14px] text-[var(--bad)]">Application not found.</p>
-      <button onClick={() => navigate("/applications")} className="mt-2 text-[13px] text-[var(--accent)] underline bg-transparent border-none cursor-pointer">
-        ← Back to Applications
-      </button>
+      <BackLink to="/applications" label="Back to Applications" />
     </div>
   );
 
   return (
     <div className="p-8 max-w-[1000px]">
       {/* Header */}
-      <div className="flex items-start justify-between mb-7">
+      <BackLink to="/applications" label="Applications" />
+      <div className="flex items-start justify-between mb-7 mt-3">
         <div className="flex items-start gap-3">
-          <button onClick={() => navigate("/applications")}
-            className="mt-0.5 h-7 w-7 flex items-center justify-center rounded border border-[var(--line)] bg-transparent text-[var(--muted)] cursor-pointer hover:border-primary/50 text-[13px]">
-            ←
-          </button>
           <div>
             <div className="flex items-center gap-2 mb-0.5">
               <h1 className="text-[22px] font-bold tracking-tight m-0">{app.name}</h1>
