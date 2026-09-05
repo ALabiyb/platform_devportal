@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useCreateApplication, useUsers, User } from "@/lib/api";
+import { useCreateApplication, useUsers, User, apiFetch } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
 
 export function CreateApplicationPage() {
@@ -14,6 +14,7 @@ export function CreateApplicationPage() {
   const [description, setDescription] = useState("");
   const [maintainerIds, setMaintainerIds] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [partialSuccess, setPartialSuccess] = useState<{ appId: string } | null>(null);
 
   function slugPreview(n: string) {
     return n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -31,17 +32,23 @@ export function CreateApplicationPage() {
     setError("");
     try {
       const app = await create.mutateAsync({ name: name.trim(), description: description.trim() });
-      // Add selected maintainers as members
-      await Promise.all(
-        maintainerIds.map(uid =>
-          fetch(`/api/v1/applications/${app.id}/members`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ user_id: uid, role: "maintainer" }),
-          })
-        )
-      );
+      // Add selected maintainers as members. The application already exists at
+      // this point — a failure here shouldn't look like the whole thing failed,
+      // but it also shouldn't be silent (plain fetch() never throws on HTTP
+      // error status, so this used to succeed unconditionally either way).
+      try {
+        await Promise.all(
+          maintainerIds.map(uid =>
+            apiFetch(`/api/v1/applications/${app.id}/members`, {
+              method: "POST",
+              body: JSON.stringify({ user_id: uid, role: "maintainer" }),
+            })
+          )
+        );
+      } catch {
+        setPartialSuccess({ appId: app.id });
+        return;
+      }
       navigate(`/applications/${app.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create application.");
@@ -50,24 +57,44 @@ export function CreateApplicationPage() {
 
   const slug = slugPreview(name);
 
+  if (partialSuccess) {
+    return (
+      <div className="p-8 max-w-[560px]">
+        <div className="border border-[var(--warn)] bg-[var(--panel)] rounded-[12px] p-7">
+          <h1 className="text-[18px] font-bold m-0 mb-2">Application created</h1>
+          <p className="text-[13px] text-[var(--muted)] m-0 mb-5">
+            {name.trim()} was created, but one or more selected members could not be added.
+            You can add them from the application page.
+          </p>
+          <button
+            onClick={() => navigate(`/applications/${partialSuccess.appId}`)}
+            className="h-9 px-4 rounded-md bg-primary border-none text-white text-[13px] font-medium cursor-pointer"
+          >
+            Go to application
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-8 max-w-[560px]">
       <button
         onClick={() => navigate("/applications")}
-        className="text-[12px] text-[#94a3b8] no-underline hover:text-[#f8fafc] bg-transparent border-none cursor-pointer mb-6 block"
+        className="text-[12px] text-[var(--muted)] no-underline hover:text-[var(--text)] bg-transparent border-none cursor-pointer mb-6 block"
       >
         ← Back to Applications
       </button>
 
-      <div className="border border-[#334155] bg-[#1e293b] rounded-[12px] p-7">
+      <div className="border border-[var(--line)] bg-[var(--panel)] rounded-[12px] p-7">
         <div className="flex items-center gap-3 mb-5">
           <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center text-primary text-[18px]">
             ▦
           </div>
           <div>
             <h1 className="text-[18px] font-bold m-0">New Application</h1>
-            <p className="text-[12px] text-[#94a3b8] m-0">
-              Creates a GitLab group and gives you control over who can add services.
+            <p className="text-[12px] text-[var(--muted)] m-0">
+              Creates a Gitea namespace and gives you control over who can add services.
             </p>
           </div>
         </div>
@@ -80,63 +107,63 @@ export function CreateApplicationPage() {
               placeholder="e.g. Restaurant POS System"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="h-10 rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60"
+              className="h-10 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60"
               autoFocus
             />
             {slug && (
-              <p className="text-[11px] text-[#64748b] m-0">
-                GitLab group: <span className="text-[#93c5fd] font-mono">/{slug}</span>
+              <p className="text-[11px] text-[var(--faint)] m-0">
+                Gitea namespace: <span className="text-[var(--accent)] font-mono">/{slug}</span>
               </p>
             )}
           </div>
 
           <div className="flex flex-col gap-1.5">
             <label className="text-[13px] font-medium">
-              Description <span className="text-[#64748b] font-normal">(optional)</span>
+              Description <span className="text-[var(--faint)] font-normal">(optional)</span>
             </label>
             <textarea
               placeholder="What is this application for?"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 py-2 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60 resize-none"
+              className="rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 py-2 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60 resize-none"
             />
           </div>
 
           {/* Maintainers */}
           <div className="flex flex-col gap-2">
             <label className="text-[13px] font-medium">
-              Team members <span className="text-[#64748b] font-normal">(optional)</span>
+              Team members <span className="text-[var(--faint)] font-normal">(optional)</span>
             </label>
-            <p className="text-[11px] text-[#64748b] m-0">Select users who will have access to add services to this application.</p>
-            <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid #334155", borderRadius: 8, background: "#0f172a" }}>
+            <p className="text-[11px] text-[var(--faint)] m-0">Select users who will have access to add services to this application.</p>
+            <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8, background: "var(--bg)" }}>
               {users.length === 0 && (
-                <div style={{ padding: "12px", fontSize: 12, color: "#64748b" }}>No other users found.</div>
+                <div style={{ padding: "12px", fontSize: 12, color: "var(--faint)" }}>No other users found.</div>
               )}
               {users.map((u: User) => {
                 const selected = maintainerIds.includes(u.id);
                 return (
                   <label key={u.id} style={{
                     display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
-                    cursor: "pointer", borderBottom: "1px solid #1e293b",
-                    background: selected ? "rgba(14,165,233,0.08)" : "transparent",
+                    cursor: "pointer", borderBottom: "1px solid var(--panel)",
+                    background: selected ? "var(--accent-soft)" : "transparent",
                   }}>
                     <input type="checkbox" checked={selected} onChange={() => toggleMaintainer(u.id)}
-                      style={{ accentColor: "#0ea5e9" }} />
+                      style={{ accentColor: "var(--accent)" }} />
                     <div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: "#f8fafc" }}>{u.display_name}</div>
-                      <div style={{ fontSize: 11, color: "#64748b", fontFamily: "JetBrains Mono,monospace" }}>{u.email}</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{u.display_name}</div>
+                      <div style={{ fontSize: 11, color: "var(--faint)", fontFamily: "JetBrains Mono,monospace" }}>{u.email}</div>
                     </div>
                   </label>
                 );
               })}
             </div>
             {maintainerIds.length > 0 && (
-              <p className="text-[11px] text-[#0ea5e9] m-0">{maintainerIds.length} member{maintainerIds.length !== 1 ? "s" : ""} selected</p>
+              <p className="text-[11px] text-[var(--accent)] m-0">{maintainerIds.length} member{maintainerIds.length !== 1 ? "s" : ""} selected</p>
             )}
           </div>
 
-          {error && <p className="text-[12px] text-[#f87171] m-0">{error}</p>}
+          {error && <p className="text-[12px] text-[var(--bad)] m-0">{error}</p>}
 
           <div className="flex gap-3 pt-1">
             <button
@@ -149,7 +176,7 @@ export function CreateApplicationPage() {
             <button
               type="button"
               onClick={() => navigate("/applications")}
-              className="h-10 px-5 rounded-md border border-[#334155] bg-transparent text-[#94a3b8] text-[13px] cursor-pointer"
+              className="h-10 px-5 rounded-md border border-[var(--line)] bg-transparent text-[var(--muted)] text-[13px] cursor-pointer"
             >
               Cancel
             </button>
