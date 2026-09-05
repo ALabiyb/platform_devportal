@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTeam, useTeamMembers, useAddTeamMember, useRemoveTeamMember, useUsers } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
+import { ConfirmDialog } from "@/components/kit";
 
 function RoleChip({ label, variant }: { label: string; variant: "org" | "team" }) {
   const colors: Record<string, { fg: string; bg: string }> = {
@@ -167,7 +168,6 @@ export function TeamDetailPage() {
       )}
 
       {/* Members table */}
-      {removeError && <p className="text-[12px] text-[var(--bad)] m-0 mb-2">{removeError}</p>}
       <div className="border border-[var(--line)] rounded-[10px] overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--line)] bg-[var(--panel)]">
           <span className="text-[13px] font-semibold">Members</span>
@@ -210,30 +210,12 @@ export function TeamDetailPage() {
                   <td className="px-5 py-3"><RoleChip label={m.role} variant="org" /></td>
                   <td className="px-5 py-3"><RoleChip label={m.member_role} variant="team" /></td>
                   <td className="px-5 py-3 text-right">
-                    {removeTarget === m.user_id ? (
-                      <div className="flex items-center justify-end gap-2">
-                        <span className="text-[12px] text-[var(--muted)]">Remove?</span>
-                        <button
-                          onClick={() => handleRemove(m.user_id)}
-                          className="text-[12px] text-[var(--bad)] bg-transparent border-none cursor-pointer underline"
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          onClick={() => setRemoveTarget(null)}
-                          className="text-[12px] text-[var(--faint)] bg-transparent border-none cursor-pointer underline"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setRemoveTarget(m.user_id)}
-                        className="text-[12px] text-[var(--faint)] hover:text-[var(--bad)] bg-transparent border-none cursor-pointer transition-colors"
-                      >
-                        Remove
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setRemoveTarget(m.user_id)}
+                      className="text-[12px] text-[var(--faint)] hover:text-[var(--bad)] bg-transparent border-none cursor-pointer transition-colors"
+                    >
+                      Remove
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -241,6 +223,21 @@ export function TeamDetailPage() {
           </table>
         )}
       </div>
+      {removeTarget && (() => {
+        const target = members?.find(m => m.user_id === removeTarget);
+        return (
+          <ConfirmDialog
+            title="Remove member?"
+            message={<>Remove <strong className="text-[var(--text)]">{target?.display_name ?? "this member"}</strong> from {team.name}?</>}
+            confirmLabel="Remove"
+            danger
+            isPending={removeMember.isPending}
+            error={removeError}
+            onConfirm={() => handleRemove(removeTarget)}
+            onCancel={() => { setRemoveTarget(null); setRemoveError(""); }}
+          />
+        );
+      })()}
     </div>
   );
 }

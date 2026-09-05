@@ -396,24 +396,30 @@ export function ApplicationDetailPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <RoleChip role={m.role} />
-                    {removeTarget === m.user_id ? (
-                      <div className="flex gap-1">
-                        <button onClick={() => handleRemove(m.user_id)}
-                          className="text-[11px] text-[var(--bad)] bg-transparent border-none cursor-pointer">✓</button>
-                        <button onClick={() => setRemoveTarget(null)}
-                          className="text-[11px] text-[var(--faint)] bg-transparent border-none cursor-pointer">✗</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setRemoveTarget(m.user_id)}
-                        className="text-[11px] text-[var(--faint)] hover:text-[var(--bad)] bg-transparent border-none cursor-pointer transition-colors">
-                        ×
-                      </button>
-                    )}
+                    <button onClick={() => setRemoveTarget(m.user_id)}
+                      className="text-[11px] text-[var(--faint)] hover:text-[var(--bad)] bg-transparent border-none cursor-pointer transition-colors">
+                      ×
+                    </button>
                   </div>
                 </div>
               ))
             )}
           </div>
+          {removeTarget && (() => {
+            const target = members?.find(m => m.user_id === removeTarget);
+            return (
+              <ConfirmDialog
+                title="Remove member?"
+                message={<>Remove <strong className="text-[var(--text)]">{target?.display_name ?? "this member"}</strong> from {app.name}?</>}
+                confirmLabel="Remove"
+                danger
+                isPending={removeMember.isPending}
+                error={removeError}
+                onConfirm={() => handleRemove(removeTarget)}
+                onCancel={() => { setRemoveTarget(null); setRemoveError(""); }}
+              />
+            );
+          })()}
         </div>
       </div>
     </div>
