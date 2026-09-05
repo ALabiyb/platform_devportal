@@ -299,6 +299,7 @@ export function UsersPage() {
                         className="btn btn-ghost btn-sm"
                         style={{ padding: "0 6px", minWidth: 26, fontWeight: 700, letterSpacing: "0.05em" }}
                         onClick={() => setOpenMenuId(menuOpen ? null : u.id)}
+                        aria-label={`Actions for ${u.display_name || u.email}`}
                       >⋯</button>
                       {menuOpen && <UserActionsMenu user={u} onClose={() => setOpenMenuId(null)} />}
                     </>

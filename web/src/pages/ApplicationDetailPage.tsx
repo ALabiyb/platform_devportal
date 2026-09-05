@@ -74,21 +74,19 @@ function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; 
             </div>
             <span className="text-[11px] text-[var(--faint)] font-mono">{svc.build_tool}</span>
           </div>
-          <div className="flex items-center gap-2">
-            {hover && (
-              <>
-                <button
-                  onClick={() => { setNewName(svc.name); setRenaming(true); }}
-                  title="Rename"
-                  className="h-7 w-7 flex items-center justify-center rounded border border-[var(--line)] bg-[var(--bg)] text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent-soft)] text-[12px] cursor-pointer transition-colors"
-                >✎</button>
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  title="Archive service"
-                  className="h-7 w-7 flex items-center justify-center rounded border border-[var(--line)] bg-[var(--bg)] text-[var(--muted)] hover:text-[var(--bad)] hover:border-[var(--bad-soft)] text-[12px] cursor-pointer transition-colors"
-                >×</button>
-              </>
-            )}
+          <div className="flex items-center gap-2" style={{ opacity: hover ? 1 : 0.55, transition: "opacity .12s" }}>
+            <button
+              onClick={() => { setNewName(svc.name); setRenaming(true); }}
+              title="Rename"
+              aria-label={`Rename ${svc.name}`}
+              className="h-7 w-7 flex items-center justify-center rounded border border-[var(--line)] bg-[var(--bg)] text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent-soft)] text-[12px] cursor-pointer transition-colors"
+            >✎</button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Archive service"
+              aria-label={`Archive ${svc.name}`}
+              className="h-7 w-7 flex items-center justify-center rounded border border-[var(--line)] bg-[var(--bg)] text-[var(--muted)] hover:text-[var(--bad)] hover:border-[var(--bad-soft)] text-[12px] cursor-pointer transition-colors"
+            >×</button>
             <span className="text-[12px] text-[var(--accent)] cursor-pointer" onClick={() => onNavigate(svc.id)}>View →</span>
           </div>
         </div>
