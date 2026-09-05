@@ -348,8 +348,6 @@ export function ApplicationDetailPage() {
             </button>
           </div>
 
-          {removeError && <p className="text-[11px] text-[var(--bad)] m-0 mb-2">{removeError}</p>}
-
           {showAddMember && (
             <form onSubmit={handleAddMember} className="border border-primary/30 bg-[var(--bg)] rounded-[8px] p-3 mb-3 flex flex-col gap-2">
               <select
