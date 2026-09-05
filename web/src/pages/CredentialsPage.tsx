@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useCredentials, useCreateCredential, useDeleteCredential, Credential } from "@/lib/api";
-import { PageHeader } from "@/components/kit";
+import { PageHeader, Modal, FormField, Button, ConfirmDialog } from "@/components/kit";
 
 const PROVIDER_COLOR: Record<string, string> = {
   jenkins:       "#f87171",
@@ -58,67 +58,58 @@ function AddCredentialModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 440, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Add credential</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0 }}>×</button>
+    <Modal title="Add credential" onClose={onClose} maxWidth={440}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <FormField label="Provider">
+          <select className="field" value={providerType} onChange={e => setProviderType(e.target.value)}>
+            {KNOWN_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+            <option value="__custom__">Other…</option>
+          </select>
+        </FormField>
+        {isCustom && (
+          <FormField label="Provider type">
+            <input className="field field-mono" placeholder="sonarqube" value={customType} onChange={e => setCustomType(e.target.value)} autoFocus />
+          </FormField>
+        )}
+        <FormField label="Label" hint="Human-readable name for this credential set.">
+          <input className="field" placeholder="Production Jenkins" value={label} onChange={e => setLabel(e.target.value)} autoFocus={!isCustom} />
+        </FormField>
+        <FormField label="Token / secret" hint="Stored in Vault — never logged or returned in API responses.">
+          <div style={{ display: "flex", gap: 8 }}>
+            <input className="field field-mono" style={{ flex: 1 }} type={showToken ? "text" : "password"}
+              placeholder="API key, robot password, or token" value={token} onChange={e => setToken(e.target.value)} />
+            <Button type="button" variant="secondary" size="sm" onClick={() => setShowToken(v => !v)}>
+              {showToken ? "Hide" : "Show"}
+            </Button>
+          </div>
+        </FormField>
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={createM.isPending} disabled={!finalType || !label.trim() || !token.trim()}>
+            Add credential
+          </Button>
         </div>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Provider</label>
-            <select className="field" value={providerType} onChange={e => setProviderType(e.target.value)}>
-              {KNOWN_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
-              <option value="__custom__">Other…</option>
-            </select>
-          </div>
-          {isCustom && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Provider type</label>
-              <input className="field field-mono" placeholder="sonarqube" value={customType} onChange={e => setCustomType(e.target.value)} autoFocus />
-            </div>
-          )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Label</label>
-            <input className="field" placeholder="Production Jenkins" value={label} onChange={e => setLabel(e.target.value)} autoFocus={!isCustom} />
-            <span style={{ fontSize: 11, color: "var(--faint)" }}>Human-readable name for this credential set.</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Token / secret</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input className="field field-mono" style={{ flex: 1 }} type={showToken ? "text" : "password"}
-                placeholder="API key, robot password, or token" value={token} onChange={e => setToken(e.target.value)} />
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowToken(v => !v)}>
-                {showToken ? "Hide" : "Show"}
-              </button>
-            </div>
-            <span style={{ fontSize: 11, color: "var(--faint)" }}>Stored in Vault — never logged or returned in API responses.</span>
-          </div>
-          {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={!finalType || !label.trim() || !token.trim() || createM.isPending}>
-              {createM.isPending ? "Adding…" : "Add credential"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
 // ── Credential card ───────────────────────────────────────────────────────────
 function CredCard({ cred }: { cred: Credential }) {
   const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState("");
   const deleteM = useDeleteCredential();
   const color = providerColor(cred.provider_type);
 
-  function handleDelete() {
-    if (!confirming) { setConfirming(true); return; }
-    deleteM.mutate(cred.id, { onSettled: () => setConfirming(false) });
+  async function handleDelete() {
+    setError("");
+    try {
+      await deleteM.mutateAsync(cred.id);
+      setConfirming(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to revoke credential.");
+    }
   }
 
   return (
@@ -165,18 +156,22 @@ function CredCard({ cred }: { cred: Credential }) {
       </div>
 
       <div style={{ padding: "12px 18px", borderTop: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 8 }}>
-        <button
-          className={`btn btn-sm ${confirming ? "btn-primary" : "btn-ghost"}`}
-          style={confirming ? { background: "var(--bad)", borderColor: "var(--bad)" } : { color: "var(--bad)" }}
-          onClick={handleDelete}
-          disabled={deleteM.isPending}
-        >
-          {deleteM.isPending ? "Revoking…" : confirming ? "Confirm revoke" : "Revoke"}
-        </button>
-        {confirming && (
-          <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>Cancel</button>
-        )}
+        <Button variant="ghost" size="sm" style={{ color: "var(--bad)" }} onClick={() => setConfirming(true)}>
+          Revoke
+        </Button>
       </div>
+      {confirming && (
+        <ConfirmDialog
+          title="Revoke credential?"
+          message={<>Revoke <strong className="text-[var(--text)]">{cred.label}</strong>? Anything using it will start failing immediately.</>}
+          confirmLabel="Revoke"
+          danger
+          isPending={deleteM.isPending}
+          error={error}
+          onConfirm={handleDelete}
+          onCancel={() => { setConfirming(false); setError(""); }}
+        />
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useTeams, useTeamMembers, useCreateTeam, useUpdateTeam, useDeleteTeam, useAddTeamMember, useRemoveTeamMember, useUsers, Team, TeamMember, User } from "@/lib/api";
-import { PageHeader } from "@/components/kit";
+import { PageHeader, Modal, FormField, Button, ConfirmDialog } from "@/components/kit";
 
 const TEAM_PALETTE = [
   "#f87171","#38bdf8","#c084fc","#fbbf24","#4ade80","#94a3b8","#fb923c","#a78bfa",
@@ -67,45 +67,29 @@ function AddMemberModal({ teamId, existingMemberIds, onClose }: { teamId: string
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 400, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Add team member</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0 }}>×</button>
+    <Modal title="Add team member" onClose={onClose} maxWidth={400}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <FormField label="User" hint={available.length === 0 ? "All platform users are already members." : undefined}>
+          <select className="field" value={userId} onChange={e => setUserId(e.target.value)} autoFocus>
+            <option value="">Select a user…</option>
+            {available.map((u: User) => (
+              <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Role">
+          <select className="field" value={role} onChange={e => setRole(e.target.value)}>
+            <option value="member">Member</option>
+            <option value="lead">Lead</option>
+          </select>
+        </FormField>
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={addM.isPending} disabled={!userId}>Add member</Button>
         </div>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>User</label>
-            <select className="field" value={userId} onChange={e => setUserId(e.target.value)} autoFocus>
-              <option value="">Select a user…</option>
-              {available.map((u: User) => (
-                <option key={u.id} value={u.id}>{u.display_name} ({u.email})</option>
-              ))}
-            </select>
-            {available.length === 0 && (
-              <span style={{ fontSize: 11.5, color: "var(--faint)" }}>All platform users are already members.</span>
-            )}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Role</label>
-            <select className="field" value={role} onChange={e => setRole(e.target.value)}>
-              <option value="member">Member</option>
-              <option value="lead">Lead</option>
-            </select>
-          </div>
-          {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={!userId || addM.isPending}>
-              {addM.isPending ? "Adding…" : "Add member"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -126,49 +110,42 @@ function TeamSettingsModal({ team, onClose }: { team: Team; onClose: () => void 
   }
 
   async function handleDelete() {
-    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setError("");
     try { await deleteM.mutateAsync(); onClose(); }
     catch (err: unknown) { setError(err instanceof Error ? err.message : "Failed to delete team."); }
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 400, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Team settings</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0 }}>×</button>
-        </div>
+    <>
+      <Modal title="Team settings" onClose={onClose} maxWidth={400}>
         <form onSubmit={handleRename} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Team name</label>
+          <FormField label="Team name" hint={`Slug: ${team.slug}`}>
             <input className="field" value={name} onChange={e => setName(e.target.value)} autoFocus />
-            <span style={{ fontSize: 11, color: "var(--faint)", fontFamily: "JetBrains Mono,monospace" }}>Slug: {team.slug}</span>
-          </div>
-          {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+          </FormField>
+          {error && !confirmDelete && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={!name.trim() || updateM.isPending}>Save</button>
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={updateM.isPending} disabled={!name.trim()}>Save</Button>
           </div>
         </form>
         <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--line)" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--bad)", marginBottom: 8 }}>Danger zone</div>
-          <button
-            className="btn btn-sm"
-            style={{ background: confirmDelete ? "var(--bad)" : "transparent", border: "1px solid var(--bad)", color: "var(--bad)" }}
-            onClick={handleDelete}
-            disabled={deleteM.isPending}
-          >
-            {deleteM.isPending ? "Deleting…" : confirmDelete ? "Confirm delete team" : "Delete team"}
-          </button>
-          {confirmDelete && (
-            <button className="btn btn-ghost btn-sm" style={{ marginLeft: 8 }} onClick={() => setConfirmDelete(false)}>Cancel</button>
-          )}
+          <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>Delete team</Button>
         </div>
-      </div>
-    </div>
+      </Modal>
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete team?"
+          message={<>Delete <strong className="text-[var(--text)]">{team.name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger
+          isPending={deleteM.isPending}
+          error={error}
+          onConfirm={handleDelete}
+          onCancel={() => { setConfirmDelete(false); setError(""); }}
+        />
+      )}
+    </>
   );
 }
 
@@ -187,30 +164,18 @@ function NewTeamModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
-      background: "rgba(2,8,23,0.7)", backdropFilter: "blur(4px)",
-    }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 12, width: "100%", maxWidth: 380, padding: 28, boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>New team</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--faint)", fontSize: 20, cursor: "pointer", padding: 0 }}>×</button>
+    <Modal title="New team" onClose={onClose} maxWidth={380}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <FormField label="Team name">
+          <input className="field" placeholder="Backend Engineering" value={name} onChange={e => setName(e.target.value)} autoFocus />
+        </FormField>
+        {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" loading={createM.isPending} disabled={!name.trim()}>Create team</Button>
         </div>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted)" }}>Team name</label>
-            <input className="field" placeholder="Backend Engineering" value={name} onChange={e => setName(e.target.value)} autoFocus />
-          </div>
-          {error && <p style={{ margin: 0, fontSize: 12, color: "var(--bad)" }}>{error}</p>}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={!name.trim() || createM.isPending}>
-              {createM.isPending ? "Creating…" : "Create team"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
