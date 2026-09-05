@@ -67,6 +67,9 @@ function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; 
           <div
             className="flex-1 cursor-pointer"
             onClick={() => onNavigate(svc.id)}
+            role="link"
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === "Enter") onNavigate(svc.id); }}
           >
             <div className="flex items-center gap-2 mb-0.5">
               <span className="text-[14px] font-semibold text-[var(--text)]">{svc.name}</span>

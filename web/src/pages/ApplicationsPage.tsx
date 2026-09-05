@@ -129,6 +129,10 @@ function AppGroup({ app, color, open, onToggle }: {
     <div className="card" style={{ padding: 0, overflow: "hidden" }}>
       <div
         onClick={onToggle}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
         style={{
           display: "grid",
           gridTemplateColumns: "22px minmax(200px,1fr) 130px 90px 120px 20px",

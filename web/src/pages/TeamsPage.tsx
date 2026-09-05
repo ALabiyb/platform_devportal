@@ -201,6 +201,10 @@ function TeamRow({ team, color, open, onToggle }: {
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         <div
           onClick={onToggle}
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
           style={{
             display: "grid",
             gridTemplateColumns: "34px minmax(0,1fr) 170px 130px 150px 20px",

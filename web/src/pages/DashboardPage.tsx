@@ -197,7 +197,13 @@ export function DashboardPage() {
       {/* KPI row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, alignItems: "stretch" }}>
         {/* Applications */}
-        <div onClick={() => navigate("/applications")} style={{ cursor: "pointer", height: "100%" }}>
+        <div
+          onClick={() => navigate("/applications")}
+          role="link"
+          tabIndex={0}
+          onKeyDown={e => { if (e.key === "Enter") navigate("/applications"); }}
+          style={{ cursor: "pointer", height: "100%" }}
+        >
           <KpiCard
             label="Applications"
             value={totalApps}
