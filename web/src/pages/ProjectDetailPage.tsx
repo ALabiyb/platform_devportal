@@ -73,7 +73,7 @@ function StepIcon({ status }: { status: StepStatus }) {
           style={{
             width: 9, height: 9, borderRadius: "50%",
             border: "2px solid #60a5fa", borderTopColor: "transparent",
-            display: "block", animation: "spin 0.8s linear infinite",
+            display: "block", animation: "dcspin 0.8s linear infinite",
           }}
         />
       )}
@@ -317,7 +317,7 @@ export function ProjectDetailPage() {
     return (
       <div className="flex h-full items-center justify-center p-6">
         <span
-          style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid #60a5fa", borderTopColor: "transparent", display: "block", animation: "spin 0.8s linear infinite" }}
+          style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid #60a5fa", borderTopColor: "transparent", display: "block", animation: "dcspin 0.8s linear infinite" }}
         />
       </div>
     );

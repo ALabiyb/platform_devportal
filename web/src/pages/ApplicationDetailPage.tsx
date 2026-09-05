@@ -124,7 +124,7 @@ function RoleChip({ role }: { role: string }) {
     ? { fg: "#facc15", bg: "rgba(234,179,8,0.15)" }
     : { fg: "#60a5fa", bg: "rgba(96,165,250,0.12)" };
   return (
-    <span style={{ color: s.fg, background: s.bg, borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono,'IBM Plex Mono',monospace)" }}>
+    <span style={{ color: s.fg, background: s.bg, borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 600, fontFamily: "'JetBrains Mono','IBM Plex Mono',monospace" }}>
       {role}
     </span>
   );

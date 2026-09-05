@@ -53,8 +53,13 @@
   --lang-python: #c084fc;
 
   /* ── shadcn compatibility — derived from brand hues ──────────────────── */
+  /* Raw H S% L% triples (no hsl() wrapper) — tailwind.config.js wraps these
+     itself via hsl(var(--x)). Do not point Tailwind at --card/--muted/--accent
+     above: those are already complete hsl(...) values and double-wrapping
+     produces invalid CSS (hsl(hsl(...))). */
   --background:           var(--brand-surface-hue) 84% 4.9%;
   --foreground:           210 40% 98%;
+  --card-hsl:             var(--brand-surface-hue) 33% 17%;
   --card-foreground:      210 40% 98%;
   --primary:              var(--brand-hue) 89% 48%;
   --primary-foreground:   var(--brand-hue) 47% 11%;
@@ -107,6 +112,23 @@
   --foreground: 222.2 47.4% 11.2%;
   --border:     var(--brand-surface-hue) 31.8% 91.4%;
   --input:      var(--brand-surface-hue) 31.8% 91.4%;
+
+  /* shadcn compatibility — light overrides. Without these, Card/Button
+     components stay on the dark-theme surface/text colors even when
+     data-theme="light" is set. */
+  --card-hsl:             var(--brand-surface-hue) 27% 96%;
+  --card-foreground:      222.2 47.4% 11.2%;
+  --primary:              var(--brand-hue) 96% 40%;
+  --primary-foreground:   0 0% 100%;
+  --secondary:            var(--brand-surface-hue) 27% 96%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted-bg:             var(--brand-surface-hue) 27% 96%;
+  --muted-foreground:     215 25% 34%;
+  --accent-hsl:           var(--brand-surface-hue) 27% 96%;
+  --accent-foreground:    222.2 47.4% 11.2%;
+  --destructive:          0 74% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --ring:                 var(--brand-hue) 96% 40%;
 }
 
 /* ── Base ────────────────────────────────────────────────────────────────── */

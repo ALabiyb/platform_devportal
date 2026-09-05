@@ -23,7 +23,7 @@ function RoleChip({ label, variant }: { label: string; variant: "org" | "team" }
         padding: "2px 8px",
         fontSize: 11,
         fontWeight: 600,
-        fontFamily: variant === "team" ? "var(--font-mono,'IBM Plex Mono',monospace)" : undefined,
+        fontFamily: variant === "team" ? "'JetBrains Mono','IBM Plex Mono',monospace" : undefined,
       }}
     >
       {label}

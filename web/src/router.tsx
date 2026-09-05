@@ -28,7 +28,7 @@ function Spinner() {
         style={{
           width: 32, height: 32, borderRadius: "50%",
           border: "3px solid #60a5fa", borderTopColor: "transparent",
-          display: "block", animation: "spin 0.8s linear infinite",
+          display: "block", animation: "dcspin 0.8s linear infinite",
         }}
       />
     </div>
