@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState, useRef, useEffect } from "react";
 import { useUsers, useCurrentUser, useCreateUser, useUpdateUserRole, useDeactivateUser, User } from "@/lib/api";
-import { Modal, FormField, Button } from "@/components/kit";
+import { Modal, FormField, Button, PageHeader } from "@/components/kit";
 
 type DisplayRole = "Platform admin" | "Developer" | "Read only";
 
@@ -204,15 +204,13 @@ export function UsersPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1400, display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <h1 className="page-h1">Users</h1>
-          <p className="page-sub">Manage access and roles for everyone on the platform.</p>
-        </div>
-        {currentUser?.role === "admin" && (
+      <PageHeader
+        title="Users"
+        subtitle="Manage access and roles for everyone on the platform."
+        actions={currentUser?.role === "admin" && (
           <button className="btn btn-primary" onClick={() => setShowInvite(true)}>+ Invite user</button>
         )}
-      </div>
+      />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 12 }}>
         {stats.map(s => (

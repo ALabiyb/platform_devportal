@@ -2,6 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useAuditEvents, AuditEvent } from "@/lib/api";
+import { PageHeader } from "@/components/kit";
 
 type Outcome = "Allowed" | "Denied";
 
@@ -129,12 +130,7 @@ export function AuditLogPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1400, display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <h1 className="page-h1">Audit log</h1>
-          <p className="page-sub">Immutable record of every significant platform action.</p>
-        </div>
-      </div>
+      <PageHeader title="Audit log" subtitle="Immutable record of every significant platform action." />
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

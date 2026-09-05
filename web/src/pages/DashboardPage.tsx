@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useApplications, useTeams, useProjects, useDashboard, DashboardActivityEvent } from "@/lib/api";
+import { PageHeader } from "@/components/kit";
 
 // ── Status badge ──────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
@@ -148,18 +149,17 @@ export function DashboardPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1400, display: "flex", flexDirection: "column", gap: 22 }}>
-      {/* Page head */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-        <div>
-          <h1 className="page-h1">Platform overview</h1>
-          <p className="page-sub">Everything NexBridge runs, as of {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} local.</p>
-        </div>
-        <div className="segmented">
-          {(["24h","7d","30d"] as const).map(r => (
-            <button key={r} className={range === r ? "active" : ""} onClick={() => setRange(r)}>{r}</button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title="Platform overview"
+        subtitle={`Everything NexBridge runs, as of ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} local.`}
+        actions={
+          <div className="segmented">
+            {(["24h","7d","30d"] as const).map(r => (
+              <button key={r} className={range === r ? "active" : ""} onClick={() => setRange(r)}>{r}</button>
+            ))}
+          </div>
+        }
+      />
 
       {/* KPI row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, alignItems: "stretch" }}>

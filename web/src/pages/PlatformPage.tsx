@@ -9,7 +9,7 @@ import {
   useClusterServices, useUpsertClusterService,
   Cluster, EnvironmentProfile, LanguageProfile, ManifestTemplate, ClusterPlatformService,
 } from "@/lib/api";
-import { Modal, FormField as Field } from "@/components/kit";
+import { Modal, FormField as Field, PageHeader } from "@/components/kit";
 
 // ── Register Cluster Modal ─────────────────────────────────────────────────────
 function RegisterClusterModal({ onClose }: { onClose: () => void }) {
@@ -659,15 +659,13 @@ export function PlatformPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1320, display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <h1 className="page-h1">Platform administration</h1>
-          <p className="page-sub">Defaults every team inherits. Changes apply to services provisioned from now on.</p>
-        </div>
-        {ACTION_LABELS[tab] && (
+      <PageHeader
+        title="Platform administration"
+        subtitle="Defaults every team inherits. Changes apply to services provisioned from now on."
+        actions={ACTION_LABELS[tab] && (
           <button className="btn btn-primary" onClick={handleAction}>{ACTION_LABELS[tab]}</button>
         )}
-      </div>
+      />
 
       <div className="tab-rail">
         {TABS.map(t => (

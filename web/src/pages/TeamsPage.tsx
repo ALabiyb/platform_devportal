@@ -2,6 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useTeams, useTeamMembers, useCreateTeam, useUpdateTeam, useDeleteTeam, useAddTeamMember, useRemoveTeamMember, useUsers, Team, TeamMember, User } from "@/lib/api";
+import { PageHeader } from "@/components/kit";
 
 const TEAM_PALETTE = [
   "#f87171","#38bdf8","#c084fc","#fbbf24","#4ade80","#94a3b8","#fb923c","#a78bfa",
@@ -339,13 +340,11 @@ export function TeamsPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1320, display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <h1 className="page-h1">Teams</h1>
-          <p className="page-sub">Teams own applications and carry on-call responsibilities.</p>
-        </div>
-        <button className="btn btn-primary" onClick={() => setShowNewTeam(true)}>+ New team</button>
-      </div>
+      <PageHeader
+        title="Teams"
+        subtitle="Teams own applications and carry on-call responsibilities."
+        actions={<button className="btn btn-primary" onClick={() => setShowNewTeam(true)}>+ New team</button>}
+      />
       {isLoading ? (
         <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading teams…</div>
       ) : teams.length === 0 ? (

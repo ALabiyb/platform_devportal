@@ -2,6 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
 import { useCredentials, useCreateCredential, useDeleteCredential, Credential } from "@/lib/api";
+import { PageHeader } from "@/components/kit";
 
 const PROVIDER_COLOR: Record<string, string> = {
   jenkins:       "#f87171",
@@ -187,15 +188,11 @@ export function CredentialsPage() {
 
   return (
     <div style={{ padding: 28, maxWidth: 1320, display: "flex", flexDirection: "column", gap: 22 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h1 className="page-h1">Platform credentials</h1>
-          <p className="page-sub">
-            {isLoading ? "Loading…" : `${creds.length} integration${creds.length !== 1 ? "s" : ""}`} · secrets stored in Vault, never rendered server-side
-          </p>
-        </div>
-        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add credential</button>
-      </div>
+      <PageHeader
+        title="Platform credentials"
+        subtitle={`${isLoading ? "Loading…" : `${creds.length} integration${creds.length !== 1 ? "s" : ""}`} · secrets stored in Vault, never rendered server-side`}
+        actions={<button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add credential</button>}
+      />
 
       {isLoading ? (
         <div style={{ padding: "48px 0", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>Loading credentials…</div>
