@@ -12,7 +12,7 @@ const LANG_COLOR: Record<string, string> = {
   python: "#c084fc", pip: "#c084fc", "python-fastapi": "#c084fc",
   docker: "#60a5fa",
   dotnet: "#a78bfa",
-  auto: "#64748b",
+  auto: "var(--faint)",
 };
 
 const APP_PALETTE = [
@@ -72,7 +72,7 @@ function ServiceStepsDrawer({ svc }: { svc: Project }) {
       <span style={{ width: 14, height: 14, borderRadius: "50%", background: "var(--ok-soft)", border: "1px solid var(--ok)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "var(--ok)", fontWeight: 700, flexShrink: 0 }}>✓</span>
     );
     if (s.status === "failed") return (
-      <span style={{ width: 14, height: 14, borderRadius: 3, border: "1.5px solid var(--bad)", background: "var(--bad-soft,#7f1d1d22)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "var(--bad)", fontWeight: 700, flexShrink: 0 }}>✕</span>
+      <span style={{ width: 14, height: 14, borderRadius: 3, border: "1.5px solid var(--bad)", background: "var(--bad-soft)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "var(--bad)", fontWeight: 700, flexShrink: 0 }}>✕</span>
     );
     if (s.status === "running") return (
       <span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--accent)", borderTopColor: "transparent", animation: "dcspin .8s linear infinite", display: "block", flexShrink: 0 }} />
@@ -191,7 +191,7 @@ function AppGroup({ app, color, open, onToggle }: {
                 >
                   <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, fontWeight: 500 }}>{svc.name}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 2, background: LANG_COLOR[svc.build_tool] ?? "#64748b", flexShrink: 0 }} />
+                    <span style={{ width: 7, height: 7, borderRadius: 2, background: LANG_COLOR[svc.build_tool] ?? "var(--faint)", flexShrink: 0 }} />
                     <span style={{ fontSize: 12, color: "var(--muted)" }}>{svc.build_tool}</span>
                   </div>
                   <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
