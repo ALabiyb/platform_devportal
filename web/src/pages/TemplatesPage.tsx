@@ -252,7 +252,7 @@ export function TemplatesPage() {
             <div style={{ padding: "14px", fontSize: 12, color: "var(--faint)" }}>Loading…</div>
           )}
           {templates.map((t: PipelineTemplate) => {
-            const color = LANG_COLOR[t.build_tool] ?? "#64748b";
+            const color = LANG_COLOR[t.build_tool] ?? "var(--faint)";
             const open = expanded === t.build_tool;
             const active = tool === t.build_tool;
             return (

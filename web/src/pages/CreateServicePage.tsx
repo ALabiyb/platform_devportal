@@ -416,7 +416,7 @@ function StepReview({ state, onJump, services, apps, errorMsg }: {
         <KV k="Services" v={depNames || "None"} />
       </ReviewSection>
       {errorMsg && (
-        <div style={{ background: "var(--bad-soft,#7f1d1d22)", borderRadius: 8, padding: "12px 14px", borderLeft: "6px solid var(--bad,#ef4444)", fontSize: 13, color: "var(--bad,#ef4444)", lineHeight: 1.5 }}>
+        <div style={{ background: "var(--bad-soft)", borderRadius: 8, padding: "12px 14px", borderLeft: "6px solid var(--bad)", fontSize: 13, color: "var(--bad)", lineHeight: 1.5 }}>
           {errorMsg}
         </div>
       )}
@@ -501,7 +501,7 @@ function ProvisionStep({ svcName, streamUrl }: { svcName: string; streamUrl: str
               {s.status === "done" ? (
                 <span style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--ok-soft)", border: "1px solid var(--ok)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--ok)", fontWeight: 700, marginTop: 1 }}>✓</span>
               ) : s.status === "failed" ? (
-                <span style={{ width: 14, height: 14, borderRadius: 3, border: "1.5px solid var(--bad)", background: "var(--bad-soft,#7f1d1d22)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--bad)", fontWeight: 700, marginTop: 2 }}>✕</span>
+                <span style={{ width: 14, height: 14, borderRadius: 3, border: "1.5px solid var(--bad)", background: "var(--bad-soft)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--bad)", fontWeight: 700, marginTop: 2 }}>✕</span>
               ) : s.status === "running" ? (
                 <span style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid var(--accent)", borderTopColor: "transparent", animation: "dcspin .8s linear infinite", display: "block", marginTop: 2 }} />
               ) : (

@@ -17,7 +17,7 @@ const PROVIDER_COLOR: Record<string, string> = {
 };
 
 function providerColor(type: string) {
-  return PROVIDER_COLOR[type.toLowerCase().replace(/[^a-z]/g, "")] ?? "#64748b";
+  return PROVIDER_COLOR[type.toLowerCase().replace(/[^a-z]/g, "")] ?? "var(--faint)";
 }
 
 function relativeTime(iso: string): string {

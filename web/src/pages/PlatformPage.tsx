@@ -262,7 +262,7 @@ function EnvProfileEditModal({ profile, onClose }: { profile: EnvironmentProfile
         </div>
         <Field label="HPA (autoscaling)">
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
-            <input type="checkbox" checked={hpaEnabled} onChange={e => setHpaEnabled(e.target.checked)} style={{ accentColor: "#0ea5e9", width: 15, height: 15 }} />
+            <input type="checkbox" checked={hpaEnabled} onChange={e => setHpaEnabled(e.target.checked)} style={{ accentColor: "var(--accent)", width: 15, height: 15 }} />
             Enable Horizontal Pod Autoscaler
           </label>
         </Field>
@@ -379,7 +379,7 @@ function ClusterServicesModal({ cluster, onClose }: { cluster: Cluster; onClose:
                 </p>
               </div>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
-                <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} style={{ accentColor: "#0ea5e9", width: 15, height: 15 }} />
+                <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} style={{ accentColor: "var(--accent)", width: 15, height: 15 }} />
                 Enabled
               </label>
             </div>
@@ -539,7 +539,7 @@ function LangProfilesTab({ onNew }: { onNew: () => void }) {
           </div>
         )}
         {profiles.map((p: LanguageProfile) => {
-          const color = LANG_COLOR[p.build_tool] ?? "#64748b";
+          const color = LANG_COLOR[p.build_tool] ?? "var(--faint)";
           const envEntries = Object.entries(p.extra_env ?? {});
           return (
             <div key={p.build_tool} className="card" style={{ padding: 0 }}>
@@ -643,7 +643,7 @@ function ManifestTemplatesTab({ onNew }: { onNew: () => void }) {
                 </div>
                 <pre style={{
                   margin: 0, padding: "14px 16px", borderRadius: 8,
-                  background: "#020817", border: "1px solid var(--line)",
+                  background: "var(--panel)", border: "1px solid var(--line)",
                   fontSize: 12, lineHeight: 1.6, fontFamily: "JetBrains Mono,monospace",
                   color: "var(--muted)", overflowX: "auto", maxHeight: 400, overflowY: "auto",
                   whiteSpace: "pre",
