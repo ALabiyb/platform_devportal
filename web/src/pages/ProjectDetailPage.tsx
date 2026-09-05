@@ -33,12 +33,12 @@ interface SSEEvent {
 
 function statusColors(status: string) {
   if (status === "active" || status === "done" || status === "Synced")
-    return { fg: "#4ade80", bg: "rgba(34,197,94,0.15)", border: "rgba(34,197,94,0.3)" };
+    return { fg: "var(--ok)", bg: "var(--ok-soft)", border: "var(--ok-soft)" };
   if (status === "provisioning" || status === "running" || status === "OutOfSync" || status === "Progressing")
-    return { fg: "#60a5fa", bg: "rgba(59,130,246,0.15)", border: "rgba(59,130,246,0.3)" };
+    return { fg: "var(--accent)", bg: "var(--accent-soft)", border: "var(--accent-soft)" };
   if (status === "failed")
-    return { fg: "#f87171", bg: "rgba(239,68,68,0.15)", border: "rgba(239,68,68,0.3)" };
-  return { fg: "#94a3b8", bg: "rgba(148,163,184,0.12)", border: "rgba(148,163,184,0.25)" };
+    return { fg: "var(--bad)", bg: "var(--bad-soft)", border: "var(--bad-soft)" };
+  return { fg: "var(--faint)", bg: "var(--faint-soft)", border: "var(--faint-soft)" };
 }
 
 function Badge({ status, label }: { status: string; label?: string }) {
@@ -63,22 +63,22 @@ function StepIcon({ status }: { status: StepStatus }) {
       className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center"
     >
       {status === "done" && (
-        <span style={{ color: "#4ade80", fontSize: 11, fontWeight: 700 }}>✓</span>
+        <span style={{ color: "var(--ok)", fontSize: 11, fontWeight: 700 }}>✓</span>
       )}
       {status === "failed" && (
-        <span style={{ color: "#f87171", fontSize: 11, fontWeight: 700 }}>✕</span>
+        <span style={{ color: "var(--bad)", fontSize: 11, fontWeight: 700 }}>✕</span>
       )}
       {status === "running" && (
         <span
           style={{
             width: 9, height: 9, borderRadius: "50%",
-            border: "2px solid #60a5fa", borderTopColor: "transparent",
+            border: "2px solid var(--accent)", borderTopColor: "transparent",
             display: "block", animation: "dcspin 0.8s linear infinite",
           }}
         />
       )}
       {status === "pending" && (
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#64748b", display: "block" }} />
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--faint)", display: "block" }} />
       )}
     </span>
   );
@@ -108,7 +108,7 @@ function useProjectStream(projectId: string, initialSteps: StepState[]) {
         .filter((s) => s.status === "done" || s.status === "failed")
         .map((s) => ({
           text: `${s.status === "done" ? "✓" : "✗"} ${s.label}`,
-          color: s.status === "done" ? "#4ade80" : "#f87171",
+          color: s.status === "done" ? "var(--ok)" : "var(--bad)",
         }));
       setTermLines(lines);
       if (initialSteps.every((s) => s.status === "done" || s.status === "failed")) {
@@ -153,13 +153,13 @@ function useProjectStream(projectId: string, initialSteps: StepState[]) {
               ...prev,
               {
                 text: `${event.status === "done" ? "✓" : "✗"} ${event.label ?? ""}${event.detail ? " — " + event.detail : ""}`,
-                color: event.status === "done" ? "#4ade80" : "#f87171",
+                color: event.status === "done" ? "var(--ok)" : "var(--bad)",
               },
             ]);
           } else if (event.status === "running") {
             setTermLines((prev) => [
               ...prev,
-              { text: `… ${event.label ?? ""}`, color: "#93c5fd" },
+              { text: `… ${event.label ?? ""}`, color: "var(--accent)" },
             ]);
           }
         }
@@ -317,7 +317,7 @@ export function ProjectDetailPage() {
     return (
       <div className="flex h-full items-center justify-center p-6">
         <span
-          style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid #60a5fa", borderTopColor: "transparent", display: "block", animation: "dcspin 0.8s linear infinite" }}
+          style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid var(--accent)", borderTopColor: "transparent", display: "block", animation: "dcspin 0.8s linear infinite" }}
         />
       </div>
     );
@@ -326,7 +326,7 @@ export function ProjectDetailPage() {
   if (!project) {
     return (
       <div className="p-8">
-        <p className="text-sm text-[#94a3b8]">Project not found.</p>
+        <p className="text-sm text-[var(--muted)]">Project not found.</p>
         <Link to="/" className="text-sm text-primary underline mt-2 inline-block">
           Back to dashboard
         </Link>
@@ -341,7 +341,7 @@ export function ProjectDetailPage() {
       {/* Header */}
       <Link
         to={project.application_id ? `/applications/${project.application_id}` : "/"}
-        className="text-[12px] text-[#94a3b8] no-underline hover:text-[#f8fafc]"
+        className="text-[12px] text-[var(--muted)] no-underline hover:text-[var(--text)]"
       >
         ← Application
       </Link>
@@ -349,14 +349,14 @@ export function ProjectDetailPage() {
         <h1 className="text-[24px] font-bold tracking-tight m-0">{project.name}</h1>
         <Badge status={project.status} />
       </div>
-      <p className="text-[13px] text-[#94a3b8] mb-7 font-mono">
+      <p className="text-[13px] text-[var(--muted)] mb-7 font-mono">
         {project.build_tool} · {project.slug ?? project.name.toLowerCase().replace(/\s+/g, "-")} ·{" "}
         {new Date(project.created_at).toLocaleDateString()}
       </p>
 
       {/* Provisioning section */}
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-[13px] font-semibold tracking-[0.04em] text-[#94a3b8] uppercase m-0">
+        <h2 className="text-[13px] font-semibold tracking-[0.04em] text-[var(--muted)] uppercase m-0">
           Provisioning
         </h2>
         <div className="flex items-center gap-2">
@@ -364,7 +364,7 @@ export function ProjectDetailPage() {
             <>
               <button
                 onClick={() => setShowEdit((v) => !v)}
-                className="text-[12px] text-[#cbd5e1] border border-[#334155] rounded-md px-3 py-1.5 bg-transparent cursor-pointer hover:border-primary/40 transition-colors"
+                className="text-[12px] text-[var(--text)] border border-[var(--line)] rounded-md px-3 py-1.5 bg-transparent cursor-pointer hover:border-primary/40 transition-colors"
               >
                 {showEdit ? "Cancel edit" : "Edit & Retry"}
               </button>
@@ -383,7 +383,7 @@ export function ProjectDetailPage() {
             <a
               href={`/api/v1/projects/${project.id}/jenkinsfile`}
               download="Jenkinsfile"
-              className="flex items-center gap-1.5 text-[12px] text-[#cbd5e1] border border-[#334155] rounded-md px-3 py-1.5 no-underline hover:border-primary/40 transition-colors"
+              className="flex items-center gap-1.5 text-[12px] text-[var(--text)] border border-[var(--line)] rounded-md px-3 py-1.5 no-underline hover:border-primary/40 transition-colors"
             >
               <Download className="w-3.5 h-3.5" />
               Jenkinsfile
@@ -395,25 +395,25 @@ export function ProjectDetailPage() {
       {/* Two-column: steps + topology */}
       <div className="grid gap-5 mb-9" style={{ gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1fr)" }}>
         {/* Steps list */}
-        <div className="border border-[#334155] bg-[#1e293b] rounded-[10px] p-2">
+        <div className="border border-[var(--line)] bg-[var(--panel)] rounded-[10px] p-2">
           {steps.length === 0 ? (
-            <div className="py-6 px-4 text-[13px] text-[#64748b]">Waiting for steps…</div>
+            <div className="py-6 px-4 text-[13px] text-[var(--faint)]">Waiting for steps…</div>
           ) : (
             steps.map((step) => (
               <div key={step.step_index} className="flex items-start gap-3 px-3 py-[9px] rounded-md">
                 <StepIcon status={step.status} />
-                <span className="text-[11px] text-[#64748b] font-mono w-[18px] shrink-0 mt-0.5">
+                <span className="text-[11px] text-[var(--faint)] font-mono w-[18px] shrink-0 mt-0.5">
                   {step.step_index}
                 </span>
                 <div className="flex flex-col min-w-0">
                   <span
                     className="text-[13px]"
-                    style={{ color: step.status === "pending" ? "#64748b" : "#f8fafc" }}
+                    style={{ color: step.status === "pending" ? "var(--faint)" : "var(--text)" }}
                   >
                     {step.label}
                   </span>
                   {step.detail && step.status === "failed" && (
-                    <span className="text-[11px] font-mono text-[#f87171] truncate mt-0.5">{step.detail}</span>
+                    <span className="text-[11px] font-mono text-[var(--bad)] truncate mt-0.5">{step.detail}</span>
                   )}
                 </div>
               </div>
@@ -425,9 +425,9 @@ export function ProjectDetailPage() {
         <div className="border border-[#1e3a5f] bg-[#060f1e] rounded-[10px] p-4 flex flex-col" style={{ minHeight: 380 }}>
           {/* Status strip */}
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-mono tracking-widest text-[#334155] uppercase">Platform topology</span>
+            <span className="text-[10px] font-mono tracking-widest text-[var(--line)] uppercase">Platform topology</span>
             <span className="text-[11px] font-mono" style={{
-              color: allDone ? "#4ade80" : anyFailed ? "#f87171" : steps.some(s => s.status === "running") ? "#93c5fd" : "#475569",
+              color: allDone ? "var(--ok)" : anyFailed ? "var(--bad)" : steps.some(s => s.status === "running") ? "var(--accent)" : "var(--faint)",
             }}>
               {allDone
                 ? "✓ Complete"
@@ -460,7 +460,7 @@ export function ProjectDetailPage() {
               return (
                 <line key={n.id}
                   x1={TOPO_CX} y1={TOPO_CY} x2={x} y2={y}
-                  stroke={ns === "failed" ? "#f87171" : (ns === "done" || ns === "active") ? n.color : "#0f2a47"}
+                  stroke={ns === "failed" ? "var(--bad)" : (ns === "done" || ns === "active") ? n.color : "#0f2a47"}
                   strokeWidth={ns === "pending" ? 1 : 1.5}
                   strokeOpacity={ns === "pending" ? 0.35 : ns === "active" ? 0.75 : ns === "done" ? 0.45 : 0.35}
                   strokeDasharray={ns === "pending" ? "3 5" : undefined}
@@ -485,7 +485,7 @@ export function ProjectDetailPage() {
             {TOPO_NODES.map(n => {
               const { x, y } = topoCenter(n.angle);
               const ns = topoNodeState(n, steps);
-              const col = ns === "failed" ? "#f87171" : n.color;
+              const col = ns === "failed" ? "var(--bad)" : n.color;
               return (
                 <g key={n.id}>
                   {/* Pulsing outer ring while active */}
@@ -512,20 +512,20 @@ export function ProjectDetailPage() {
                   {/* Done / failed badge */}
                   {ns === "done" && (
                     <>
-                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="#4ade80" strokeWidth={1.2} />
-                      <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="#4ade80" fontWeight="700">✓</text>
+                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="var(--ok)" strokeWidth={1.2} />
+                      <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="var(--ok)" fontWeight="700">✓</text>
                     </>
                   )}
                   {ns === "failed" && (
                     <>
-                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="#f87171" strokeWidth={1.2} />
-                      <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="#f87171" fontWeight="700">✕</text>
+                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="var(--bad)" strokeWidth={1.2} />
+                      <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="var(--bad)" fontWeight="700">✕</text>
                     </>
                   )}
 
                   {/* Label */}
                   <text x={x} y={y + 30} textAnchor="middle" fontSize={9.5}
-                    fill={ns === "pending" ? "#334155" : "#cbd5e1"}
+                    fill={ns === "pending" ? "var(--line)" : "var(--text)"}
                     fontWeight={ns === "active" ? 600 : 400}
                   >
                     {n.label}
@@ -542,7 +542,7 @@ export function ProjectDetailPage() {
               const doneCount = steps.filter(s => s.status === "done").length;
               const total = steps.length || 15;
               const pct = Math.round((doneCount / total) * 100);
-              const hubColor = allDone ? "#4ade80" : anyFailed ? "#f87171" : "#60a5fa";
+              const hubColor = allDone ? "var(--ok)" : anyFailed ? "var(--bad)" : "var(--accent)";
               const isRunning = steps.some(s => s.status === "running");
               return (
                 <g filter={allDone || isRunning ? "url(#topo-hub-glow)" : undefined}>
@@ -557,13 +557,13 @@ export function ProjectDetailPage() {
                         fontSize={14} fill={hubColor} fontWeight="700">
                         {doneCount > 0 || allDone ? `${pct}%` : "⚙"}
                       </text>
-                      <text x={TOPO_CX} y={TOPO_CY + 10} textAnchor="middle" fontSize={8.5} fill="#334155">
+                      <text x={TOPO_CX} y={TOPO_CY + 10} textAnchor="middle" fontSize={8.5} fill="var(--line)">
                         {doneCount}/{total} steps
                       </text>
                     </>
                   )}
                   {steps.length === 0 && (
-                    <text x={TOPO_CX} y={TOPO_CY} textAnchor="middle" dominantBaseline="central" fontSize={12} fill="#334155">⚙</text>
+                    <text x={TOPO_CX} y={TOPO_CY} textAnchor="middle" dominantBaseline="central" fontSize={12} fill="var(--line)">⚙</text>
                   )}
                 </g>
               );
@@ -572,7 +572,7 @@ export function ProjectDetailPage() {
 
           {/* Current / final step label */}
           <div className="mt-2 text-[11px] font-mono text-center min-h-[18px] truncate px-2" style={{
-            color: anyFailed && finished ? "#f87171" : allDone ? "#4ade80" : "#64748b",
+            color: anyFailed && finished ? "var(--bad)" : allDone ? "var(--ok)" : "var(--faint)",
           }}>
             {steps.some(s => s.status === "running") && `… ${steps.find(s => s.status === "running")?.label}`}
             {allDone && "All provisioning steps completed successfully"}
@@ -585,27 +585,27 @@ export function ProjectDetailPage() {
       {showEdit && anyFailed && (
         <form
           onSubmit={handleSaveAndRetry}
-          className="border border-[#f87171]/30 bg-[#1e293b] rounded-[10px] p-5 mb-6 flex flex-col gap-4"
+          className="border border-[var(--bad-soft)] bg-[var(--panel)] rounded-[10px] p-5 mb-6 flex flex-col gap-4"
         >
-          <p className="text-[13px] font-semibold m-0 text-[#f8fafc]">Edit service configuration</p>
-          <p className="text-[11px] text-[#64748b] m-0 -mt-2">
-            Note: the service slug (<span className="font-mono text-[#93c5fd]">{project.slug}</span>) is fixed — it is baked into the Gitea repo name and Jenkins job.
+          <p className="text-[13px] font-semibold m-0 text-[var(--text)]">Edit service configuration</p>
+          <p className="text-[11px] text-[var(--faint)] m-0 -mt-2">
+            Note: the service slug (<span className="font-mono text-[var(--accent)]">{project.slug}</span>) is fixed — it is baked into the Gitea repo name and Jenkins job.
           </p>
 
           <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-[#94a3b8]">Service name</label>
+              <label className="text-[12px] font-medium text-[var(--muted)]">Service name</label>
               <input
                 type="text" value={editName} onChange={(e) => setEditName(e.target.value)} required
-                className="h-9 rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60"
+                className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-[#94a3b8]">Build tool</label>
+              <label className="text-[12px] font-medium text-[var(--muted)]">Build tool</label>
               <select
                 value={editBuildTool} onChange={(e) => setEditBuildTool(e.target.value)}
-                className="h-9 rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-[inherit] focus:outline-none"
+                className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-[inherit] focus:outline-none"
               >
                 {BUILD_TOOLS.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
@@ -614,40 +614,40 @@ export function ProjectDetailPage() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-[#94a3b8]">Notification email</label>
+              <label className="text-[12px] font-medium text-[var(--muted)]">Notification email</label>
               <input
                 type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
-                className="h-9 rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60"
+                className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-[inherit] focus:outline-none focus:border-primary/60"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-[#94a3b8]">App timezone</label>
+              <label className="text-[12px] font-medium text-[var(--muted)]">App timezone</label>
               <input
                 type="text" value={editTimezone} onChange={(e) => setEditTimezone(e.target.value)}
-                className="h-9 rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-mono focus:outline-none focus:border-primary/60"
+                className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-mono focus:outline-none focus:border-primary/60"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-[#94a3b8]">Staging URL <span className="text-[#475569] font-normal">(DAST)</span></label>
+              <label className="text-[12px] font-medium text-[var(--muted)]">Staging URL <span className="text-[var(--faint)] font-normal">(DAST)</span></label>
               <input
                 type="url" value={editStagingUrl} onChange={(e) => setEditStagingUrl(e.target.value)}
                 placeholder="https://service-dev.cluster.example.com"
-                className="h-9 rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-mono focus:outline-none focus:border-primary/60"
+                className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-mono focus:outline-none focus:border-primary/60"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-[12px] font-medium text-[#94a3b8]">K8s manifest paths</label>
+              <label className="text-[12px] font-medium text-[var(--muted)]">K8s manifest paths</label>
               <input
                 type="text" value={editManifestPaths} onChange={(e) => setEditManifestPaths(e.target.value)}
-                className="h-9 rounded-md border border-[#334155] bg-[#0f172a] text-[#f8fafc] px-3 text-[13px] font-mono focus:outline-none focus:border-primary/60"
+                className="h-9 rounded-md border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-3 text-[13px] font-mono focus:outline-none focus:border-primary/60"
               />
             </div>
           </div>
 
-          {editError && <p className="text-[12px] text-[#f87171] m-0">{editError}</p>}
+          {editError && <p className="text-[12px] text-[var(--bad)] m-0">{editError}</p>}
 
           <div className="flex gap-3 pt-1">
             <button
@@ -659,7 +659,7 @@ export function ProjectDetailPage() {
             </button>
             <button
               type="button" onClick={() => setShowEdit(false)}
-              className="h-9 px-5 rounded-md border border-[#334155] bg-transparent text-[#94a3b8] text-[13px] cursor-pointer"
+              className="h-9 px-5 rounded-md border border-[var(--line)] bg-transparent text-[var(--muted)] text-[13px] cursor-pointer"
             >
               Cancel
             </button>
@@ -668,7 +668,7 @@ export function ProjectDetailPage() {
       )}
 
       {/* Environments */}
-      <h2 className="text-[13px] font-semibold tracking-[0.04em] text-[#94a3b8] uppercase mb-3">
+      <h2 className="text-[13px] font-semibold tracking-[0.04em] text-[var(--muted)] uppercase mb-3">
         Environments
       </h2>
       <div className="grid grid-cols-3 gap-4">
@@ -681,7 +681,7 @@ export function ProjectDetailPage() {
           const dbName = dbEnv?.db_name;
 
           return (
-            <div key={envName} className="border border-[#334155] bg-[#1e293b] rounded-[10px] p-[18px]">
+            <div key={envName} className="border border-[var(--line)] bg-[var(--panel)] rounded-[10px] p-[18px]">
               <div className="flex items-center justify-between mb-3.5">
                 <span className="text-[14px] font-semibold uppercase tracking-[0.03em]">
                   {envName}
@@ -690,20 +690,20 @@ export function ProjectDetailPage() {
               </div>
               <div className="flex flex-col gap-2 text-[12px]">
                 <div>
-                  <span className="text-[#64748b]">Namespace</span>
-                  <div className="font-mono text-[#f8fafc] mt-0.5">{namespace}</div>
+                  <span className="text-[var(--faint)]">Namespace</span>
+                  <div className="font-mono text-[var(--text)] mt-0.5">{namespace}</div>
                 </div>
                 <div>
-                  <span className="text-[#64748b]">ArgoCD</span>
-                  <div className="font-mono text-[#f8fafc] mt-0.5">{argoStatus}</div>
+                  <span className="text-[var(--faint)]">ArgoCD</span>
+                  <div className="font-mono text-[var(--text)] mt-0.5">{argoStatus}</div>
                 </div>
                 <div>
-                  <span className="text-[#64748b]">Database</span>
-                  <div className="font-mono text-[#f8fafc] mt-0.5">{dbName ?? "—"}</div>
+                  <span className="text-[var(--faint)]">Database</span>
+                  <div className="font-mono text-[var(--text)] mt-0.5">{dbName ?? "—"}</div>
                 </div>
                 {ingressUrl && (
                   <div>
-                    <span className="text-[#64748b]">Ingress</span>
+                    <span className="text-[var(--faint)]">Ingress</span>
                     <div className="mt-0.5">
                       <a href={ingressUrl} target="_blank" rel="noreferrer"
                         className="font-mono text-[12px] text-primary no-underline hover:underline">
