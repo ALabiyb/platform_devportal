@@ -1,7 +1,7 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   useClusters, useCreateCluster, useEnvironmentProfiles, useUpdateEnvironmentProfile,
   useLanguageProfiles, useUpsertLanguageProfile,
@@ -640,8 +640,20 @@ function ManifestTemplatesTab({ onNew }: { onNew: () => void }) {
 const TABS = ["Clusters", "Environment Profiles", "Language Profiles", "Manifest Templates"] as const;
 type Tab = typeof TABS[number];
 
+const TAB_SLUG: Record<Tab, string> = {
+  "Clusters": "clusters",
+  "Environment Profiles": "environment-profiles",
+  "Language Profiles": "language-profiles",
+  "Manifest Templates": "manifest-templates",
+};
+const SLUG_TAB: Record<string, Tab> = Object.fromEntries(
+  Object.entries(TAB_SLUG).map(([t, slug]) => [slug, t as Tab])
+);
+
 export function PlatformPage() {
-  const [tab, setTab] = useState<Tab>("Clusters");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = SLUG_TAB[searchParams.get("tab") ?? ""] ?? "Clusters";
+  const setTab = (t: Tab) => setSearchParams(t === "Clusters" ? {} : { tab: TAB_SLUG[t] }, { replace: true });
   const [showRegisterCluster, setShowRegisterCluster] = useState(false);
   const [showNewLangProfile, setShowNewLangProfile] = useState(false);
   const [showNewManifestTemplate, setShowNewManifestTemplate] = useState(false);
