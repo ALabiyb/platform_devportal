@@ -93,6 +93,7 @@ function DetailPanel({ event }: { event: AuditEvent }) {
 }
 
 const ALL_CATEGORIES = ["Auth","Provisioning","Applications","Users","Credentials","Teams","Templates","Platform","General"];
+const PAGE_SIZE = 20;
 
 export function AuditLogPage() {
   const { data: events = [], isLoading } = useAuditEvents();
@@ -100,6 +101,7 @@ export function AuditLogPage() {
   const [cat, setCat] = useState("All");
   const [outcome, setOutcome] = useState<"All" | "Allowed" | "Denied">("All");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const filtered = events.filter((e: AuditEvent) => {
     const q = search.toLowerCase();
@@ -114,6 +116,17 @@ export function AuditLogPage() {
     return matchSearch && matchCat && matchOutcome;
   });
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const rangeStart = filtered.length === 0 ? 0 : clampedPage * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(filtered.length, (clampedPage + 1) * PAGE_SIZE);
+  const pageItems = filtered.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+
+  function updateFilter(fn: () => void) {
+    fn();
+    setPage(0);
+  }
+
   return (
     <div style={{ padding: 28, maxWidth: 1400, display: "flex", flexDirection: "column", gap: 22 }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -126,15 +139,15 @@ export function AuditLogPage() {
       {/* Filters */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input className="field" style={{ maxWidth: 260 }} placeholder="Search action, actor or resource"
-          value={search} onChange={e => setSearch(e.target.value)} />
+          value={search} onChange={e => updateFilter(() => setSearch(e.target.value))} />
         <select className="field" style={{ width: "auto", padding: "0 12px" }}
-          value={cat} onChange={e => setCat(e.target.value)}>
+          value={cat} onChange={e => updateFilter(() => setCat(e.target.value))}>
           <option>All</option>
           {ALL_CATEGORIES.map(c => <option key={c}>{c}</option>)}
         </select>
         <div className="segmented" style={{ marginLeft: "auto" }}>
           {(["All", "Allowed", "Denied"] as const).map(o => (
-            <button key={o} className={outcome === o ? "active" : ""} onClick={() => setOutcome(o)}>{o}</button>
+            <button key={o} className={outcome === o ? "active" : ""} onClick={() => updateFilter(() => setOutcome(o))}>{o}</button>
           ))}
         </div>
       </div>
@@ -159,7 +172,7 @@ export function AuditLogPage() {
           <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--faint)" }}>
             {events.length === 0 ? "No audit events recorded yet." : "No events match these filters."}
           </div>
-        ) : filtered.map((e: AuditEvent) => {
+        ) : pageItems.map((e: AuditEvent) => {
           const isExpanded = expandedId === e.id;
           const ev_outcome = inferOutcome(e.action);
           const category = inferCategory(e.resource_type);
@@ -197,10 +210,16 @@ export function AuditLogPage() {
 
       {/* Footer */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, color: "var(--faint)" }}>
-        <span>{filtered.length} of {events.length} events</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn-ghost btn-sm" disabled>← Newer</button>
-          <button className="btn btn-ghost btn-sm" disabled>Older →</button>
+        <span>
+          {filtered.length === 0 ? "0" : `${rangeStart}–${rangeEnd}`} of {filtered.length} events
+          {filtered.length !== events.length && ` (${events.length} total)`}
+        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontFamily: "JetBrains Mono,monospace" }}>Page {clampedPage + 1} of {pageCount}</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" disabled={clampedPage === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>← Newer</button>
+            <button className="btn btn-ghost btn-sm" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}>Older →</button>
+          </div>
         </div>
       </div>
     </div>

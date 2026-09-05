@@ -612,7 +612,9 @@ export function useAuditEvents() {
     queryKey: ["audit"],
     queryFn: async () => {
       try {
-        return await apiFetch("/api/v1/audit");
+        // 500 is the server-enforced max (ListAuditEvents) — fetch as much as
+        // it'll give us so client-side pagination has real pages to page through.
+        return await apiFetch("/api/v1/audit?limit=500");
       } catch (e) {
         if (e instanceof ApiError && e.status === 501) return [];
         throw e;
