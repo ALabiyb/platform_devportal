@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useTheme } from "@/components/Layout";
 import { LANG_COLOR } from "@/lib/langColor";
+import { FormField, Button } from "@/components/kit";
 import {
   useApplications,
   useApplicationServices,
@@ -21,8 +22,6 @@ interface WizardState {
   buildTool: string; port: string; liveness: string; readiness: string; tier: string;
   infra: string[]; deps: string[]; // deps stores service IDs
 }
-
-const STEPS = ["Identity","Build tool","Runtime","Infra","Deps","Review","Provision"] as const;
 
 const SERVICE_KINDS = [
   { id: "backend",  label: "Backend",  desc: "HTTP/gRPC API, worker with a health endpoint" },
@@ -52,75 +51,41 @@ const TIERS = [
   { id: "large",  label: "Large",  spec: "1000m / 2Gi · 5 pods",   desc: "Tier-1, customer-facing" },
 ];
 
-
-// ── Progress rail ─────────────────────────────────────────────────────────────
-function ProgressRail({ step, maxReached, onJump }: { step: number; maxReached: number; onJump: (i: number) => void }) {
-  const connector = (filled: boolean, half: boolean, hidden: boolean) => (
-    <div style={{ flex: 1, height: 2, background: "var(--line)", position: "relative", overflow: "hidden", visibility: hidden ? "hidden" : "visible" }}>
-      <div style={{
-        position: "absolute", top: 0, left: 0, height: "100%",
-        background: "var(--accent)",
-        width: filled ? "100%" : half ? "50%" : "0%",
-        transition: "width 0.45s cubic-bezier(0.4,0,0.2,1)",
-      }} />
-    </div>
-  );
-
+// ── Shared: a card section on the form ─────────────────────────────────────────
+function FormSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
-    <div style={{ padding: "22px 40px 0", maxWidth: 1040, margin: "0 auto", width: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center" }}>
-        {STEPS.map((label, i) => {
-          const isFirst = i === 0, isLast = i === STEPS.length - 1;
-          const done = i < step, current = i === step, reachable = i <= maxReached;
-          // left half of this step's connector fills when we've reached or passed step i
-          const leftFilled = step >= i;
-          // right half fills only when step i is done
-          const rightFilled = done;
-
-          return (
-            <div key={i} style={{ display: "flex", alignItems: "center", flex: 1 }}>
-              {/* Left connector half — hidden for first step */}
-              {connector(leftFilled, false, isFirst)}
-
-              {/* Node: circle above, label below */}
-              <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                <button
-                  onClick={() => reachable && i !== step && onJump(i)}
-                  disabled={!reachable || i === step || i === 6}
-                  title={label}
-                  style={{
-                    width: 32, height: 32, borderRadius: "50%",
-                    cursor: reachable && i < step ? "pointer" : "default",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, fontWeight: 700, fontFamily: "JetBrains Mono,monospace",
-                    border: done ? "none" : current ? "2px solid var(--accent)" : "1.5px solid var(--line2)",
-                    background: done ? "var(--accent)" : current ? "transparent" : "var(--panel)",
-                    color: done ? "var(--accent-ink)" : current ? "var(--accent)" : "var(--faint)",
-                    transition: "background 0.3s, border-color 0.3s, color 0.3s",
-                    animation: current ? "dcring 1.6s ease-out infinite" : "none",
-                    padding: 0, outline: "none",
-                  }}
-                >{done ? "✓" : i + 1}</button>
-                <div style={{
-                  fontSize: 11, fontWeight: current ? 600 : 400, whiteSpace: "nowrap",
-                  color: current ? "var(--accent)" : done ? "var(--text)" : reachable ? "var(--muted)" : "var(--faint)",
-                  transition: "color 0.3s",
-                  animation: current ? "dcrise 0.25s ease both" : "none",
-                }}>{label}</div>
-              </div>
-
-              {/* Right connector half — hidden for last step */}
-              {connector(rightFilled, current, isLast)}
-            </div>
-          );
-        })}
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div>
+        <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{title}</h3>
+        <p style={{ margin: 0, fontSize: 12.5, color: "var(--faint)", lineHeight: 1.5, maxWidth: "60ch" }}>{description}</p>
       </div>
+      {children}
     </div>
   );
 }
 
-// ── Step 1: Identity ──────────────────────────────────────────────────────────
-function StepIdentity({ state, onChange, apps, users }: {
+// Keyboard-operable selection card — role="radio" for single-select groups,
+// role="checkbox" for multi-select. Plain onClick divs weren't reachable by
+// keyboard at all before this.
+function SelCard({ selected, onSelect, role, children }: {
+  selected: boolean; onSelect: () => void; role: "radio" | "checkbox"; children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`sel-card${selected ? " selected" : ""}`}
+      role={role}
+      aria-checked={selected}
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ── Identity ────────────────────────────────────────────────────────────────────
+function SectionIdentity({ state, onChange, apps, users }: {
   state: WizardState;
   onChange: (p: Partial<WizardState>) => void;
   apps: Application[];
@@ -129,13 +94,12 @@ function StepIdentity({ state, onChange, apps, users }: {
   const selectedApp = apps.find((a: Application) => a.id === state.appId);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <div>
-        <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>Service name</label>
+    <FormSection title="Identity" description="Choose a unique slug that becomes the repo name, image tag and ArgoCD app name.">
+      <FormField label="Service name" hint="lowercase, hyphens, ≤ 40 chars">
         <input className="field field-lg field-mono" placeholder="ledger-reconciler" value={state.name}
-          onChange={e => onChange({ name: e.target.value })} style={{ maxWidth: 360 }} />
-        <div style={{ fontSize: 11, color: "var(--faint)", fontFamily: "JetBrains Mono,monospace", marginTop: 5 }}>lowercase, hyphens, ≤ 40 chars</div>
-      </div>
+          onChange={e => onChange({ name: e.target.value })} style={{ maxWidth: 360 }} autoFocus />
+      </FormField>
+
       <div>
         <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 8 }}>Service kind</label>
         <div className="segmented" style={{ width: "fit-content" }}>
@@ -149,127 +113,128 @@ function StepIdentity({ state, onChange, apps, users }: {
           {SERVICE_KINDS.find(k => k.id === state.serviceKind)?.desc}
         </div>
       </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 480 }}>
-        <div>
-          <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>Application</label>
+        <FormField label="Application">
           <select className="field" value={state.appId} onChange={e => onChange({ appId: e.target.value })}>
             <option value="">Select application…</option>
             {apps.map((a: Application) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
-        </div>
-        <div>
-          <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>Assignee</label>
+        </FormField>
+        <FormField label="Assignee">
           <select className="field" value={state.assigneeId} onChange={e => onChange({ assigneeId: e.target.value })}>
             <option value="">Select assignee…</option>
             {users.map((u: User) => (
               <option key={u.id} value={u.id}>{u.display_name || u.email}</option>
             ))}
           </select>
-        </div>
+        </FormField>
       </div>
-      <div style={{ maxWidth: 480 }}>
-        <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>Description</label>
+
+      <FormField label="Description">
         <textarea className="field" rows={3}
           placeholder="One line a stranger on call would understand."
           value={state.description} onChange={e => onChange({ description: e.target.value })}
-          style={{ padding: "11px 13px", lineHeight: 1.5, resize: "vertical", height: "auto" }} />
-      </div>
+          style={{ padding: "11px 13px", lineHeight: 1.5, resize: "vertical", height: "auto", maxWidth: 480 }} />
+      </FormField>
+
       {state.name && selectedApp && (
-        <div style={{ background: "var(--panel)", borderRadius: 8, padding: "12px 14px", borderLeft: "6px solid var(--accent)", maxWidth: 480 }}>
+        <div style={{ background: "var(--bg)", borderRadius: 8, padding: "12px 14px", borderLeft: "3px solid var(--accent)", maxWidth: 480 }}>
           <div style={{ fontSize: 12, color: "var(--faint)" }}>Repository will be created at</div>
           <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, color: "var(--accent)", marginTop: 4 }}>
             git.nexbridge.io/{selectedApp.git_namespace || selectedApp.slug}/{state.name}.git
           </div>
         </div>
       )}
-    </div>
+    </FormSection>
   );
 }
 
-// ── Step 2: Build tool ────────────────────────────────────────────────────────
-function StepBuildTool({ state, onChange }: { state: WizardState; onChange: (p: Partial<WizardState>) => void }) {
+// ── Build ───────────────────────────────────────────────────────────────────────
+function SectionBuild({ state, onChange }: { state: WizardState; onChange: (p: Partial<WizardState>) => void }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(228px,1fr))", gap: 12 }}>
-      {BUILD_TOOLS.map(t => {
-        const selected = state.buildTool === t.id;
-        return (
-          <div key={t.id} className={`sel-card${selected ? " selected" : ""}`} onClick={() => onChange({ buildTool: t.id })}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11, fontWeight: 600, color: t.color }}>{t.id}</span>
-              <span style={{ width: 14, height: 14, borderRadius: "50%", border: `1.5px solid ${selected ? "var(--accent)" : "var(--line2)"}`, background: selected ? "var(--accent)" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {selected && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-ink)" }} />}
-              </span>
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{t.lang}</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>{t.subtitle}</div>
-            <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-              {[t.image, t.cmd].map(v => (
-                <span key={v} style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, padding: "2px 8px", borderRadius: 6, background: selected ? "var(--accent-soft)" : "var(--card)", border: `1px solid ${selected ? "var(--accent)" : "var(--line2)"}`, color: selected ? "var(--accent)" : "var(--muted)" }}>{v}</span>
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
+    <FormSection title="Build" description="The language profile sets the Jenkinsfile template, Dockerfile base image and probe timings.">
+      <div role="radiogroup" aria-label="Build tool" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(228px,1fr))", gap: 12 }}>
+        {BUILD_TOOLS.map(t => {
+          const selected = state.buildTool === t.id;
+          return (
+            <SelCard key={t.id} role="radio" selected={selected} onSelect={() => onChange({ buildTool: t.id })}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11, fontWeight: 600, color: t.color }}>{t.id}</span>
+                <span style={{ width: 14, height: 14, borderRadius: "50%", border: `1.5px solid ${selected ? "var(--accent)" : "var(--line2)"}`, background: selected ? "var(--accent)" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {selected && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-ink)" }} />}
+                </span>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{t.lang}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>{t.subtitle}</div>
+              <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                {[t.image, t.cmd].map(v => (
+                  <span key={v} style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, padding: "2px 8px", borderRadius: 6, background: selected ? "var(--accent-soft)" : "var(--card)", border: `1px solid ${selected ? "var(--accent)" : "var(--line2)"}`, color: selected ? "var(--accent)" : "var(--muted)" }}>{v}</span>
+                ))}
+              </div>
+            </SelCard>
+          );
+        })}
+      </div>
+    </FormSection>
   );
 }
 
-// ── Step 3: Runtime ───────────────────────────────────────────────────────────
-function StepRuntime({ state, onChange }: { state: WizardState; onChange: (p: Partial<WizardState>) => void }) {
+// ── Runtime ─────────────────────────────────────────────────────────────────────
+function SectionRuntime({ state, onChange }: { state: WizardState; onChange: (p: Partial<WizardState>) => void }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+    <FormSection title="Runtime" description="These values go into the Kustomize base and the liveness/readiness probes.">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, maxWidth: 560 }}>
         {[["Container port","port","8080"],["Liveness path","liveness","/actuator/health/liveness"],["Readiness path","readiness","/actuator/health/readiness"]].map(([label, key, placeholder]) => (
-          <div key={key}>
-            <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>{label}</label>
+          <FormField key={key} label={label!}>
             <input className="field field-mono" placeholder={placeholder}
               value={(state as unknown as Record<string, string>)[key!]}
               onChange={e => onChange({ [key as keyof WizardState]: e.target.value } as Partial<WizardState>)} />
-          </div>
+          </FormField>
         ))}
       </div>
       <div>
         <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--muted)", marginBottom: 10 }}>Resource tier</label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, maxWidth: 560 }}>
+        <div role="radiogroup" aria-label="Resource tier" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, maxWidth: 560 }}>
           {TIERS.map(t => {
             const selected = state.tier === t.id;
             return (
-              <div key={t.id} className={`sel-card${selected ? " selected" : ""}`} onClick={() => onChange({ tier: t.id })}>
+              <SelCard key={t.id} role="radio" selected={selected} onSelect={() => onChange({ tier: t.id })}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{t.label}</span>
                   <span style={{ width: 14, height: 14, borderRadius: "50%", border: `1.5px solid ${selected ? "var(--accent)" : "var(--line2)"}`, background: selected ? "var(--accent)" : "transparent", flexShrink: 0 }} />
                 </div>
                 <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: selected ? "var(--accent)" : "var(--muted)" }}>{t.spec}</div>
                 <div style={{ fontSize: 12, color: "var(--faint)" }}>{t.desc}</div>
-              </div>
+              </SelCard>
             );
           })}
         </div>
       </div>
-      <div style={{ background: "var(--panel)", borderRadius: 8, padding: "12px 14px", maxWidth: 480, fontSize: 12, color: "var(--faint)", lineHeight: 1.6 }}>
+      <div style={{ background: "var(--bg)", borderRadius: 8, padding: "12px 14px", maxWidth: 480, fontSize: 12, color: "var(--faint)", lineHeight: 1.6 }}>
         Probe timings inherited from language profile: Initial delay 30s · period 10s · failure threshold 3.{" "}
         <Link to="/platform" style={{ color: "var(--accent)", textDecoration: "none" }}>Override →</Link>
       </div>
-    </div>
+    </FormSection>
   );
 }
 
-// ── Step 4: Infra ─────────────────────────────────────────────────────────────
-function StepInfra({ state, onChange }: { state: WizardState; onChange: (p: Partial<WizardState>) => void }) {
+// ── Infrastructure ────────────────────────────────────────────────────────────
+function SectionInfra({ state, onChange }: { state: WizardState; onChange: (p: Partial<WizardState>) => void }) {
   const toggle = (id: string) => {
     const set = new Set(state.infra);
     set.has(id) ? set.delete(id) : set.add(id);
     onChange({ infra: [...set] });
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px,1fr))", gap: 12 }}>
+    <FormSection title="Infrastructure" description="Infrastructure operator CRs will be committed alongside the Kustomize manifests.">
+      <div role="group" aria-label="Infrastructure" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px,1fr))", gap: 12 }}>
         {INFRA_OPTIONS.map(inf => {
           const checked = state.infra.includes(inf.id);
           return (
-            <div key={inf.id} className={`sel-card${checked ? " selected" : ""}`} onClick={() => toggle(inf.id)}>
+            <SelCard key={inf.id} role="checkbox" selected={checked} onSelect={() => toggle(inf.id)}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{inf.name}</span>
                 <span style={{ width: 17, height: 17, borderRadius: 5, border: `1.5px solid ${checked ? "var(--accent)" : "var(--line2)"}`, background: checked ? "var(--accent)" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "var(--accent-ink)" }}>
@@ -278,7 +243,7 @@ function StepInfra({ state, onChange }: { state: WizardState; onChange: (p: Part
               </div>
               <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--accent)", marginTop: 2 }}>{inf.op}</div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{inf.blurb}</div>
-            </div>
+            </SelCard>
           );
         })}
       </div>
@@ -287,12 +252,12 @@ function StepInfra({ state, onChange }: { state: WizardState; onChange: (p: Part
           ? "No infrastructure attached — the service will run stateless."
           : `${state.infra.join(", ")} · ~${state.infra.length * 2} vCPU reserved`}
       </div>
-    </div>
+    </FormSection>
   );
 }
 
-// ── Step 5: Deps ──────────────────────────────────────────────────────────────
-function StepDeps({ state, onChange, services }: {
+// ── Dependencies ──────────────────────────────────────────────────────────────
+function SectionDeps({ state, onChange, services }: {
   state: WizardState;
   onChange: (p: Partial<WizardState>) => void;
   services: Project[];
@@ -313,9 +278,9 @@ function StepDeps({ state, onChange, services }: {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <FormSection title="Dependencies" description="Declared dependencies are added to the NetworkPolicy and service mesh allow-list.">
       <input className="field" style={{ maxWidth: 300 }} placeholder="Search services…" value={search} onChange={e => setSearch(e.target.value)} />
-      <div style={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, maxHeight: 360, overflowY: "auto" }}>
+      <div style={{ background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, maxHeight: 300, overflowY: "auto" }}>
         {visible.length === 0 ? (
           <div style={{ padding: "32px 16px", textAlign: "center", color: "var(--faint)", fontSize: 13 }}>
             {services.length === 0
@@ -325,11 +290,13 @@ function StepDeps({ state, onChange, services }: {
         ) : visible.map((s, i) => {
           const selected = state.deps.includes(s.id);
           return (
-            <div key={s.id} onClick={() => toggle(s.id)} style={{
-              display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
-              borderTop: i > 0 ? "1px solid var(--line)" : "none",
-              background: selected ? "var(--accent-soft)" : "transparent", cursor: "pointer",
-            }}>
+            <div key={s.id} onClick={() => toggle(s.id)} role="checkbox" aria-checked={selected} tabIndex={0}
+              onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(s.id); } }}
+              style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
+                borderTop: i > 0 ? "1px solid var(--line)" : "none",
+                background: selected ? "var(--accent-soft)" : "transparent", cursor: "pointer",
+              }}>
               <span style={{ width: 17, height: 17, borderRadius: 5, border: `1.5px solid ${selected ? "var(--accent)" : "var(--line2)"}`, background: selected ? "var(--accent)" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "var(--accent-ink)" }}>
                 {selected ? "✓" : ""}
               </span>
@@ -347,88 +314,80 @@ function StepDeps({ state, onChange, services }: {
           ? "No dependencies declared — the service will run independently."
           : `${state.deps.length} service${state.deps.length > 1 ? "s" : ""} declared as dependencies`}
       </div>
-    </div>
+    </FormSection>
   );
 }
 
-// ── Step 6: Review ────────────────────────────────────────────────────────────
-function ReviewSection({ title, onEdit, children }: { title: string; step?: number; onEdit: () => void; children: React.ReactNode }) {
-  return (
-    <div className="card" style={{ padding: 0 }}>
-      <div style={{ padding: "11px 16px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span className="overline">{title}</span>
-        <button className="btn btn-ghost btn-sm" onClick={onEdit}>Edit ↩</button>
-      </div>
-      <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 12 }}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
+// ── Live summary sidebar ──────────────────────────────────────────────────────
 function KV({ k, v }: { k: string; v: string }) {
   return (
-    <div>
-      <div style={{ fontSize: 11.5, color: "var(--faint)", marginBottom: 3 }}>{k}</div>
-      <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 13, color: "var(--text)" }}>{v || "—"}</div>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+      <span style={{ fontSize: 12, color: "var(--faint)" }}>{k}</span>
+      <span style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--text)", textAlign: "right" }}>{v || "—"}</span>
     </div>
   );
 }
 
-function StepReview({ state, onJump, services, apps, errorMsg }: {
+function SummarySidebar({ state, apps, services, canProvision, isProvisioning, errorMsg, onProvision }: {
   state: WizardState;
-  onJump: (i: number) => void;
-  services: Project[];
   apps: Application[];
+  services: Project[];
+  canProvision: boolean;
+  isProvisioning: boolean;
   errorMsg: string | null;
+  onProvision: () => void;
 }) {
   const bt = BUILD_TOOLS.find(b => b.id === state.buildTool);
   const ti = TIERS.find(t => t.id === state.tier);
-  const appName = apps.find(a => a.id === state.appId)?.name ?? state.appId;
-  const depNames = state.deps.map(id => {
-    const s = services.find(s => s.id === id);
-    return s ? `${s.name}:${s.port || 8080}` : id;
-  }).join(", ");
+  const app = apps.find(a => a.id === state.appId);
   const kindLabel = SERVICE_KINDS.find(k => k.id === state.serviceKind)?.label ?? state.serviceKind;
+  const depNames = state.deps.map(id => services.find(s => s.id === id)?.name ?? id).join(", ");
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <ReviewSection title="Identity" step={0} onEdit={() => onJump(0)}>
-        <KV k="Name"        v={state.name || "—"} />
-        <KV k="Kind"        v={kindLabel} />
-        <KV k="Application" v={appName} />
-        <KV k="Assignee"    v={state.assigneeId || "—"} />
-      </ReviewSection>
-      <ReviewSection title="Build" step={1} onEdit={() => onJump(1)}>
-        <KV k="Profile"    v={state.buildTool || "—"} />
-        <KV k="Runtime"    v={bt?.lang ?? "—"} />
-        <KV k="Base image" v={bt?.image ?? "—"} />
-      </ReviewSection>
-      <ReviewSection title="Runtime" step={2} onEdit={() => onJump(2)}>
-        <KV k="Port"     v={state.port || "8080"} />
-        <KV k="Liveness" v={state.liveness || "/actuator/health/liveness"} />
-        <KV k="Tier"     v={ti ? `${ti.label} · ${ti.spec}` : "medium"} />
-      </ReviewSection>
-      <ReviewSection title="Infrastructure" step={3} onEdit={() => onJump(3)}>
-        <KV k="Attached"   v={state.infra.length ? state.infra.join(", ") : "None (stateless)"} />
-        <KV k="Resources"  v={state.infra.length ? `~${state.infra.length * 2} vCPU reserved` : "—"} />
-      </ReviewSection>
-      <ReviewSection title="Dependencies" step={4} onEdit={() => onJump(4)}>
-        <KV k="Services" v={depNames || "None"} />
-      </ReviewSection>
+    <div className="card" style={{ position: "sticky", top: 108, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <p className="overline accent" style={{ margin: "0 0 4px" }}>What gets created</p>
+        <p style={{ margin: 0, fontFamily: "JetBrains Mono,monospace", fontSize: 15, fontWeight: 600, color: "var(--text)", wordBreak: "break-word" }}>
+          {state.name || "unnamed-service"}
+        </p>
+        {app && (
+          <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--faint)" }}>in {app.name}</p>
+        )}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--line)", paddingTop: 14 }}>
+        <KV k="Kind" v={kindLabel} />
+        <KV k="Build" v={bt ? `${bt.id} · ${bt.lang}` : "—"} />
+        <KV k="Port" v={state.port || "8080"} />
+        <KV k="Tier" v={ti?.label ?? "medium"} />
+        <KV k="Infra" v={state.infra.length ? state.infra.join(", ") : "None"} />
+        <KV k="Depends on" v={depNames || "None"} />
+      </div>
+
       {errorMsg && (
-        <div style={{ background: "var(--bad-soft)", borderRadius: 8, padding: "12px 14px", borderLeft: "6px solid var(--bad)", fontSize: 13, color: "var(--bad)", lineHeight: 1.5 }}>
+        <div style={{ background: "var(--bad-soft)", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: "var(--bad)", lineHeight: 1.5 }}>
           {errorMsg}
         </div>
       )}
-      <div style={{ background: "var(--warn-soft)", borderRadius: 8, padding: "12px 14px", borderLeft: "6px solid var(--warn)", fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>
-        Provisioning creates real resources. The repo, Harbor project and infra CRs are not automatically removed if you cancel mid-run.
-      </div>
+
+      <Button onClick={onProvision} disabled={!canProvision} loading={isProvisioning} size="lg" style={{ justifyContent: "center", width: "100%" }}>
+        {isProvisioning ? "Provisioning…" : "Provision service"}
+      </Button>
+
+      {!canProvision && !isProvisioning && (
+        <p style={{ margin: 0, fontSize: 11.5, color: "var(--faint)", textAlign: "center" }}>
+          {!state.appId ? "Select an application to continue." : "Name the service to continue."}
+        </p>
+      )}
+
+      <p style={{ margin: 0, fontSize: 11, color: "var(--faint)", lineHeight: 1.5, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+        Provisioning creates real resources immediately — the repo, Harbor project and infra CRs aren't automatically removed if it fails partway.
+      </p>
     </div>
   );
 }
 
-// ── Step 7: Provision ─────────────────────────────────────────────────────────
+// ── Provisioning — live SSE step stream ───────────────────────────────────────
 interface StepRow { index: number; label: string; status: string; detail: string }
 
 function ProvisionStep({ svcName, streamUrl }: { svcName: string; streamUrl: string }) {
@@ -533,27 +492,7 @@ function ProvisionStep({ svcName, streamUrl }: { svcName: string; streamUrl: str
   );
 }
 
-// ── Wizard footer ─────────────────────────────────────────────────────────────
-function WizardFooter({ step, canContinue, onBack, onNext, provisioning, allDone }: {
-  step: number; canContinue: boolean; onBack: () => void; onNext: () => void; provisioning: boolean; allDone: boolean;
-}) {
-  const nextLabel = step === 5 ? (provisioning ? "Provisioning…" : "Provision service") : step === 6 ? (allDone ? "Done" : "Provisioning…") : "Continue";
-  return (
-    <div style={{ position: "sticky", bottom: 0, background: "var(--panel)", borderTop: "1px solid var(--line)", padding: "14px 24px", zIndex: 10 }}>
-      <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", alignItems: "center" }}>
-        <button className="btn btn-secondary" onClick={onBack} disabled={step === 0 || provisioning} style={{ opacity: step === 0 ? 0.4 : 1 }}>← Back</button>
-        <div style={{ flex: 1, textAlign: "center", fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--faint)" }}>
-          {step === 6 ? (allDone ? "all steps complete" : "provisioning…") : (!canContinue ? "complete this step to continue" : "")}
-        </div>
-        <button className="btn btn-primary" onClick={onNext} disabled={!canContinue || (step === 6 && !allDone) || provisioning}>
-          {nextLabel}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Main wizard ───────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
 const DEFAULT_STATE: WizardState = {
   name: "", appId: "", assigneeId: "", description: "",
   serviceKind: "backend",
@@ -566,8 +505,7 @@ export function CreateServicePage() {
   const { appId: urlAppId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const { theme, toggle: toggleTheme } = useTheme();
-  const [step, setStep] = useState(0);
-  const [maxReached, setMaxReached] = useState(0);
+  const [phase, setPhase] = useState<"form" | "provisioning">("form");
   const [state, setState] = useState<WizardState>({ ...DEFAULT_STATE, appId: urlAppId || "" });
   const [isProvisioning, setIsProvisioning] = useState(false);
   const [streamUrl, setStreamUrl] = useState<string>("");
@@ -575,70 +513,59 @@ export function CreateServicePage() {
 
   const { data: apps = [] } = useApplications();
   const { data: users = [] } = useUsers();
-  // Load services for the currently selected application (for deps step)
+  // Load services for the currently selected application (for the deps section)
   const { data: appServices = [] } = useApplicationServices(state.appId);
   const createService = useCreateService(state.appId);
 
   const update = (p: Partial<WizardState>) => setState(prev => ({ ...prev, ...p }));
 
-  const canContinue = (() => {
-    if (step === 0) return state.name.length > 1 && !!state.appId;
-    if (step === 1) return !!state.buildTool;
-    if (step === 6) return false;
-    return true;
-  })();
+  const canProvision = state.name.trim().length > 1 && !!state.appId && !!state.buildTool;
 
-  const goNext = async () => {
-    if (step === 5) {
-      setIsProvisioning(true);
-      setCreateError(null);
-      try {
-        const result = await createService.mutateAsync({
-          name: state.name,
-          build_tool: state.buildTool,
-          port: parseInt(state.port) || 8080,
-          health_path: state.liveness || "/healthz",
-          service_kind: state.serviceKind,
-          notification_email: "",
-          app_timezone: "Africa/Dar_es_Salaam",
-          infra_requirements: state.infra.map(type => ({ service_type: type, config: {} })),
-          talks_to: state.deps.map(id => ({
-            project_id: id,
-            port: appServices.find(s => s.id === id)?.port || 80,
-          })),
-          members: state.assigneeId ? [{ user_id: state.assigneeId, role: "developer" }] : [],
-        });
+  const handleProvision = async () => {
+    if (!canProvision) return;
+    setIsProvisioning(true);
+    setCreateError(null);
+    try {
+      const result = await createService.mutateAsync({
+        name: state.name,
+        build_tool: state.buildTool,
+        port: parseInt(state.port) || 8080,
+        health_path: state.liveness || "/healthz",
+        service_kind: state.serviceKind,
+        notification_email: "",
+        app_timezone: "Africa/Dar_es_Salaam",
+        infra_requirements: state.infra.map(type => ({ service_type: type, config: {} })),
+        talks_to: state.deps.map(id => ({
+          project_id: id,
+          port: appServices.find(s => s.id === id)?.port || 80,
+        })),
+        members: state.assigneeId ? [{ user_id: state.assigneeId, role: "developer" }] : [],
+      });
 
-        setStreamUrl(result.stream_url || "");
-        setStep(6);
-        setMaxReached(6);
-      } catch (error) {
-        setIsProvisioning(false);
-        let msg = "Failed to create service.";
-        if (error instanceof Error) {
-          msg = error.message.includes("already exists")
-            ? `A service named "${state.name}" already exists in this application.`
-            : error.message || msg;
-        }
-        setCreateError(msg);
+      setStreamUrl(result.stream_url || "");
+      setPhase("provisioning");
+    } catch (error) {
+      setIsProvisioning(false);
+      let msg = "Failed to create service.";
+      if (error instanceof Error) {
+        msg = error.message.includes("already exists")
+          ? `A service named "${state.name}" already exists in this application.`
+          : error.message || msg;
       }
-      return;
+      setCreateError(msg);
     }
-    if (step === 6) { navigate("/applications"); return; }
-    const next = step + 1;
-    setStep(next);
-    setMaxReached(m => Math.max(m, next));
   };
-
-  const goBack = () => step > 0 && setStep(s => s - 1);
-  const jumpTo = (i: number) => { if (i <= maxReached) { setStep(i); } };
 
   const currentAppName = apps.find((a: Application) => a.id === state.appId)?.name ?? state.appId ?? "—";
 
   return (
     <div style={{ minHeight: "100%", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
-      <div style={{ height: 56, background: "var(--panel)", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", padding: "0 24px", gap: 16, flexShrink: 0 }}>
+      <div style={{
+        height: 56, background: "var(--panel)", borderBottom: "1px solid var(--line)",
+        display: "flex", alignItems: "center", padding: "0 24px", gap: 16, flexShrink: 0,
+        position: "sticky", top: 52, zIndex: 4,
+      }}>
         <Link to="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none" }}>
           <span style={{ width: 26, height: 26, borderRadius: 7, background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: "var(--accent-ink)" }}>N</span>
         </Link>
@@ -662,42 +589,34 @@ export function CreateServicePage() {
         </div>
       </div>
 
-      {/* Progress rail */}
-      <ProgressRail step={step} maxReached={maxReached} onJump={jumpTo} />
-
-      {/* Content */}
-      <div style={{ flex: 1, padding: "36px 24px 48px", maxWidth: 760, margin: "0 auto", width: "100%" }}>
-        <p className="overline accent" style={{ marginBottom: 6 }}>Step {step + 1} of 7 · {STEPS[step]}</p>
-        <h2 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--text)", marginBottom: 8, marginTop: 0 }}>
-          {["Name the service","Pick a language profile","Port and health checks","Attach infrastructure","Declare service dependencies","Review before provisioning","Provisioning"][step]}
-        </h2>
-        <p style={{ fontSize: 14, color: "var(--muted)", maxWidth: "60ch", marginBottom: 28, marginTop: 0, lineHeight: 1.6 }}>
-          {[
-            "Choose a unique slug that becomes the repo name, image tag and ArgoCD app name.",
-            "The language profile sets the Jenkinsfile template, Dockerfile base image and probe timings.",
-            "These values go into the Kustomize base and the liveness/readiness probes.",
-            "Infrastructure operator CRs will be committed alongside the Kustomize manifests.",
-            "Declared dependencies are added to the NetworkPolicy and service mesh allow-list.",
-            "Review every field before provisioning. Resources are created immediately.",
-            "Sit back — the platform is wiring everything up.",
-          ][step]}
-        </p>
-        {step === 0 && <StepIdentity state={state} onChange={update} apps={apps} users={users} />}
-        {step === 1 && <StepBuildTool state={state} onChange={update} />}
-        {step === 2 && <StepRuntime state={state} onChange={update} />}
-        {step === 3 && <StepInfra state={state} onChange={update} />}
-        {step === 4 && <StepDeps state={state} onChange={update} services={appServices} />}
-        {step === 5 && <StepReview state={state} onJump={jumpTo} services={appServices} apps={apps} errorMsg={createError} />}
-        {step === 6 && <ProvisionStep svcName={state.name} streamUrl={streamUrl} />}
-      </div>
-
-      {/* Footer */}
-      {step < 6 && (
-        <WizardFooter
-          step={step} canContinue={canContinue}
-          onBack={goBack} onNext={goNext}
-          provisioning={isProvisioning} allDone={false}
-        />
+      {phase === "provisioning" ? (
+        <div style={{ flex: 1, padding: "36px 24px 48px", maxWidth: 760, margin: "0 auto", width: "100%" }}>
+          <ProvisionStep svcName={state.name} streamUrl={streamUrl} />
+        </div>
+      ) : (
+        <div style={{
+          flex: 1, padding: "32px 24px 64px", maxWidth: 1080, margin: "0 auto", width: "100%",
+          display: "grid", gridTemplateColumns: "minmax(0,1fr) 300px", gap: 24, alignItems: "start",
+        }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div>
+              <h2 style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--text)", margin: "0 0 6px" }}>New service</h2>
+              <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
+                Fill in what you know — the summary on the right updates as you go, and provisions the moment you're ready.
+              </p>
+            </div>
+            <SectionIdentity state={state} onChange={update} apps={apps} users={users} />
+            <SectionBuild state={state} onChange={update} />
+            <SectionRuntime state={state} onChange={update} />
+            <SectionInfra state={state} onChange={update} />
+            <SectionDeps state={state} onChange={update} services={appServices} />
+          </div>
+          <SummarySidebar
+            state={state} apps={apps} services={appServices}
+            canProvision={canProvision} isProvisioning={isProvisioning}
+            errorMsg={createError} onProvision={handleProvision}
+          />
+        </div>
       )}
     </div>
   );
