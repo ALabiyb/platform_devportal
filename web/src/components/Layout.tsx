@@ -4,6 +4,7 @@ import { useCallback, createContext, useContext, useState, useEffect } from "rea
 import { Outlet, NavLink, useNavigate, useLocation, Link } from "react-router-dom";
 import { useLogout, useCurrentUser } from "@/lib/api";
 import { useIdleTimeout } from "@/hooks/useIdleTimeout";
+import { CommandPalette, openCommandPalette, isMac } from "@/components/commandPalette";
 
 // ── Theme ─────────────────────────────────────────────────────────────────
 export function useTheme() {
@@ -40,6 +41,7 @@ const Icons = {
   users:        `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5" r="2.5"/><path d="M2.5 14c0-2.2 2.5-4 5.5-4s5.5 1.8 5.5 4"/></svg>`,
   templates:    `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="1.5" width="13" height="13" rx="1.2"/><path d="M7 1.5v13M1.5 6h5.5"/></svg>`,
   platform:     `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.22 3.22l1.42 1.42M11.36 11.36l1.42 1.42M3.22 12.78l1.42-1.42M11.36 4.64l1.42-1.42"/></svg>`,
+  search:       `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="4.5"/><path d="M13.5 13.5L10.5 10.5"/></svg>`,
   signout:      `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/><path d="M11 11l3-3-3-3M14 8H6"/></svg>`,
   sun:          `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.22 3.22l1.42 1.42M11.36 11.36l1.42 1.42M3.22 12.78l1.42-1.42M11.36 4.64l1.42-1.42"/></svg>`,
   moon:         `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 10A6 6 0 0 1 6 2.5a6 6 0 1 0 7.5 7.5Z"/></svg>`,
@@ -121,6 +123,27 @@ export function TopBar({ theme, onToggleTheme }: { theme: "dark" | "light"; onTo
         <span style={{ color: "var(--text)", fontWeight: 600 }}>{pageLabel}</span>
         {subtitle && <span style={{ color: "var(--faint)", fontSize: 12 }}>{subtitle}</span>}
       </div>
+
+      {/* Command palette trigger */}
+      <button
+        onClick={openCommandPalette}
+        title="Search"
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          height: 30, padding: "0 10px", borderRadius: 7,
+          border: "1px solid var(--line)", background: "transparent",
+          color: "var(--faint)", fontSize: 12.5, cursor: "pointer",
+          transition: "border-color .12s, color .12s",
+        }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent)"; (e.currentTarget as HTMLElement).style.color = "var(--text)"; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--line)"; (e.currentTarget as HTMLElement).style.color = "var(--faint)"; }}
+      >
+        <SvgIcon html={Icons.search} size={13} />
+        <span>Search</span>
+        <kbd style={{ fontSize: 10.5, border: "1px solid var(--line2)", borderRadius: 4, padding: "1px 5px", fontFamily: "inherit" }}>
+          {isMac ? "⌘K" : "Ctrl+K"}
+        </kbd>
+      </button>
 
       {/* Theme toggle */}
       <button
@@ -296,6 +319,7 @@ export function Layout() {
           </div>
         )}
       </div>
+      <CommandPalette />
     </TopBarContext.Provider>
   );
 }
