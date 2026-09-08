@@ -2,8 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useState, useEffect } from "react";
 import { useTemplates, useTemplate, useUpdateTemplate, PipelineTemplate } from "@/lib/api";
-
-const LANG_COLOR: Record<string, string> = { maven: "#f87171", gradle: "#4ade80", go: "#38bdf8", node: "#fbbf24", npm: "#fbbf24", python: "#c084fc", pip: "#c084fc" };
+import { langColor } from "@/lib/langColor";
 
 const GW_KW = new Set(["pipeline","agent","label","environment","options","stages","stage","steps","post","always","success","failure","when","script","tools","parameters","triggers","def"]);
 const GW_FN = new Set(["sh","echo","checkout","withCredentials","timeout","retry","archiveArtifacts","junit","error","dir","writeFile"]);
@@ -252,7 +251,7 @@ export function TemplatesPage() {
             <div style={{ padding: "14px", fontSize: 12, color: "var(--faint)" }}>Loading…</div>
           )}
           {templates.map((t: PipelineTemplate) => {
-            const color = LANG_COLOR[t.build_tool] ?? "var(--faint)";
+            const color = langColor(t.build_tool);
             const open = expanded === t.build_tool;
             const active = tool === t.build_tool;
             return (

@@ -2,7 +2,7 @@
 // Contact: saidlabiybm@gmail.com
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { BackLink } from "@/components/kit";
+import { BackLink, Button } from "@/components/kit";
 import { Download } from "lucide-react";
 import { useProject, useProvisioningSteps, useEnvironments, useUpdateService, useReprovisionService } from "@/lib/api";
 
@@ -288,8 +288,12 @@ export function ProjectDetailPage() {
     if (!reprovisionSvc) return;
     setEditError("");
     resetStream();
-    await reprovisionSvc.mutateAsync();
-    refetchProject();
+    try {
+      await reprovisionSvc.mutateAsync();
+      refetchProject();
+    } catch (err: unknown) {
+      setEditError(err instanceof Error ? err.message : "Failed to start retry.");
+    }
   }
 
   async function handleSaveAndRetry(e: React.FormEvent) {
@@ -365,13 +369,9 @@ export function ProjectDetailPage() {
                 {showEdit ? "Cancel edit" : "Edit & Retry"}
               </button>
               {!showEdit && (
-                <button
-                  onClick={handleRetry}
-                  disabled={reprovisionSvc.isPending}
-                  className="text-[12px] text-white border-none rounded-md px-3 py-1.5 bg-primary cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-50"
-                >
+                <Button size="sm" onClick={handleRetry} loading={reprovisionSvc.isPending}>
                   {reprovisionSvc.isPending ? "Starting…" : "Retry"}
-                </button>
+                </Button>
               )}
             </>
           )}
@@ -418,7 +418,7 @@ export function ProjectDetailPage() {
         </div>
 
         {/* Service mesh topology */}
-        <div className="border border-[#1e3a5f] bg-[#060f1e] rounded-[10px] p-4 flex flex-col" style={{ minHeight: 380 }}>
+        <div className="border border-[var(--line)] bg-[var(--panel)] rounded-[10px] p-4 flex flex-col" style={{ minHeight: 380 }}>
           {/* Status strip */}
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] font-mono tracking-widest text-[var(--line)] uppercase">Platform topology</span>
@@ -456,7 +456,7 @@ export function ProjectDetailPage() {
               return (
                 <line key={n.id}
                   x1={TOPO_CX} y1={TOPO_CY} x2={x} y2={y}
-                  stroke={ns === "failed" ? "var(--bad)" : (ns === "done" || ns === "active") ? n.color : "#0f2a47"}
+                  stroke={ns === "failed" ? "var(--bad)" : (ns === "done" || ns === "active") ? n.color : "var(--line2)"}
                   strokeWidth={ns === "pending" ? 1 : 1.5}
                   strokeOpacity={ns === "pending" ? 0.35 : ns === "active" ? 0.75 : ns === "done" ? 0.45 : 0.35}
                   strokeDasharray={ns === "pending" ? "3 5" : undefined}
@@ -494,8 +494,8 @@ export function ProjectDetailPage() {
 
                   {/* Node circle */}
                   <circle cx={x} cy={y} r={22}
-                    fill={ns === "pending" ? "#0a1628" : `${col}1e`}
-                    stroke={ns === "pending" ? "#1e3a5f" : col}
+                    fill={ns === "pending" ? "var(--card)" : `${col}1e`}
+                    stroke={ns === "pending" ? "var(--line2)" : col}
                     strokeWidth={ns === "active" ? 2 : 1.5}
                     filter={ns === "active" ? `url(#tglow-${n.id})` : undefined}
                   />
@@ -508,13 +508,13 @@ export function ProjectDetailPage() {
                   {/* Done / failed badge */}
                   {ns === "done" && (
                     <>
-                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="var(--ok)" strokeWidth={1.2} />
+                      <circle cx={x + 16} cy={y - 16} r={7} fill="var(--panel)" stroke="var(--ok)" strokeWidth={1.2} />
                       <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="var(--ok)" fontWeight="700">✓</text>
                     </>
                   )}
                   {ns === "failed" && (
                     <>
-                      <circle cx={x + 16} cy={y - 16} r={7} fill="#060f1e" stroke="var(--bad)" strokeWidth={1.2} />
+                      <circle cx={x + 16} cy={y - 16} r={7} fill="var(--panel)" stroke="var(--bad)" strokeWidth={1.2} />
                       <text x={x + 16} y={y - 16} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="var(--bad)" fontWeight="700">✕</text>
                     </>
                   )}
@@ -526,7 +526,7 @@ export function ProjectDetailPage() {
                   >
                     {n.label}
                   </text>
-                  <text x={x} y={y + 42} textAnchor="middle" fontSize={8} fill="#1e3a5f">
+                  <text x={x} y={y + 42} textAnchor="middle" fontSize={8} fill="var(--faint)">
                     {n.sub}
                   </text>
                 </g>
@@ -646,13 +646,9 @@ export function ProjectDetailPage() {
           {editError && <p className="text-[12px] text-[var(--bad)] m-0">{editError}</p>}
 
           <div className="flex gap-3 pt-1">
-            <button
-              type="submit"
-              disabled={updateService.isPending || reprovisionSvc.isPending}
-              className="h-9 px-5 rounded-md bg-primary border-none text-white text-[13px] font-medium cursor-pointer disabled:opacity-50"
-            >
+            <Button type="submit" loading={updateService.isPending || reprovisionSvc.isPending}>
               {updateService.isPending || reprovisionSvc.isPending ? "Saving…" : "Save & Retry"}
-            </button>
+            </Button>
             <button
               type="button" onClick={() => setShowEdit(false)}
               className="h-9 px-5 rounded-md border border-[var(--line)] bg-transparent text-[var(--muted)] text-[13px] cursor-pointer"

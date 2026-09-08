@@ -1,7 +1,19 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
-import { QueryCache, QueryClient } from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { showToast } from "@/components/toast";
+
+// Spread into a useMutation() whose callers all render the failure inline
+// (try/catch → setError). Suppresses the global mutation-error toast so the
+// user doesn't get the same message twice.
+export const INLINE_ERRORS = { meta: { silentError: true } } as const;
+
+function toastError(error: unknown, fallback: string) {
+  showToast({
+    tone: "bad",
+    message: error instanceof ApiError ? error.message : fallback,
+  });
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,10 +36,17 @@ export const queryClient = new QueryClient({
       // 401 triggers a silent redirect to sign-in (see apiFetch) — that's the
       // user-visible outcome, not a "something broke" toast on top of it.
       if (error instanceof ApiError && error.status === 401) return;
-      showToast({
-        tone: "bad",
-        message: error instanceof ApiError ? error.message : "Failed to load data.",
-      });
+      toastError(error, "Failed to load data.");
+    },
+  }),
+  // Same net for writes. Skipped when the hook opts out via INLINE_ERRORS or
+  // supplies its own onError — either means a page is already showing feedback.
+  mutationCache: new MutationCache({
+    onError: (error, _vars, _ctx, mutation) => {
+      if (mutation.meta?.silentError) return;
+      if (mutation.options.onError) return;
+      if (error instanceof ApiError && error.status === 401) return;
+      toastError(error, "Request failed.");
     },
   }),
 });

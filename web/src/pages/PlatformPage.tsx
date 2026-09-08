@@ -1,6 +1,7 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
 import { useState } from "react";
+import { langColor } from "@/lib/langColor";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   useClusters, useCreateCluster, useEnvironmentProfiles, useUpdateEnvironmentProfile,
@@ -490,11 +491,6 @@ function EnvProfilesTab() {
 }
 
 // ── Language Profiles tab ─────────────────────────────────────────────────────
-const LANG_COLOR: Record<string, string> = {
-  maven: "#f87171", gradle: "#4ade80", go: "#38bdf8",
-  node: "#fbbf24", npm: "#fbbf24", python: "#c084fc", pip: "#c084fc",
-};
-
 function LangProfilesTab({ onNew }: { onNew: () => void }) {
   const { data: profiles = [], isLoading } = useLanguageProfiles();
   const [editProfile, setEditProfile] = useState<LanguageProfile | null>(null);
@@ -515,7 +511,7 @@ function LangProfilesTab({ onNew }: { onNew: () => void }) {
           </div>
         )}
         {profiles.map((p: LanguageProfile) => {
-          const color = LANG_COLOR[p.build_tool] ?? "var(--faint)";
+          const color = langColor(p.build_tool);
           const envEntries = Object.entries(p.extra_env ?? {});
           return (
             <div key={p.build_tool} className="card" style={{ padding: 0 }}>

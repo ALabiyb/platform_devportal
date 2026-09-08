@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCreateApplication, useUsers, User, apiFetch } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
-import { BackLink } from "@/components/kit";
+import { BackLink, Button } from "@/components/kit";
 
 export function CreateApplicationPage() {
   const navigate = useNavigate();
@@ -67,12 +67,9 @@ export function CreateApplicationPage() {
             {name.trim()} was created, but one or more selected members could not be added.
             You can add them from the application page.
           </p>
-          <button
-            onClick={() => navigate(`/applications/${partialSuccess.appId}`)}
-            className="h-9 px-4 rounded-md bg-primary border-none text-white text-[13px] font-medium cursor-pointer"
-          >
+          <Button onClick={() => navigate(`/applications/${partialSuccess.appId}`)}>
             Go to application
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -162,13 +159,15 @@ export function CreateApplicationPage() {
           {error && <p className="text-[12px] text-[var(--bad)] m-0">{error}</p>}
 
           <div className="flex gap-3 pt-1">
-            <button
+            <Button
               type="submit"
-              disabled={!name.trim() || create.isPending}
-              className="h-10 flex-1 rounded-md bg-primary border-none text-white text-[13px] font-medium cursor-pointer disabled:opacity-50"
+              size="lg"
+              className="flex-1 justify-center"
+              disabled={!name.trim()}
+              loading={create.isPending}
             >
               {create.isPending ? "Creating…" : "Create application"}
-            </button>
+            </Button>
             <button
               type="button"
               onClick={() => navigate("/applications")}

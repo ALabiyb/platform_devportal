@@ -1,7 +1,7 @@
 // Author: Labiyb M. Said — DevSecOps Engineer
 // Contact: saidlabiybm@gmail.com
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { ApiError, queryClient } from "./queryClient";
+import { ApiError, INLINE_ERRORS, queryClient } from "./queryClient";
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -191,6 +191,7 @@ export function useCurrentUser() {
 
 export function useLocalLogin() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (creds: { email: string; password: string }) =>
       apiFetch<{ token: string }>("/auth/login", {
         method: "POST",
@@ -213,6 +214,7 @@ export function useLogout() {
 
 export function useRegister() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { display_name: string; email: string; password: string }) =>
       apiFetch<User>("/auth/register", {
         method: "POST",
@@ -259,6 +261,7 @@ export function useProvisioningSteps(projectId: string) {
 
 export function useCreateProject() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: {
       name: string;
       team_id: string;
@@ -295,6 +298,7 @@ export function useApplication(id: string) {
 
 export function useCreateApplication() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { name: string; description?: string }) =>
       apiFetch<Application>("/api/v1/applications", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["applications"] }),
@@ -303,6 +307,7 @@ export function useCreateApplication() {
 
 export function useUpdateApplication(appId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { name: string; description?: string }) =>
       apiFetch<Application>(`/api/v1/applications/${appId}`, { method: "PUT", body: JSON.stringify(body) }),
     onSuccess: () => {
@@ -314,6 +319,7 @@ export function useUpdateApplication(appId: string) {
 
 export function useDeleteApplication(appId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: () => apiFetch(`/api/v1/applications/${appId}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["applications"] });
@@ -331,6 +337,7 @@ export function useApplicationMembers(appId: string) {
 
 export function useAddApplicationMember(appId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { user_id: string; role: string }) =>
       apiFetch(`/api/v1/applications/${appId}/members`, { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["applications", appId, "members"] }),
@@ -339,6 +346,7 @@ export function useAddApplicationMember(appId: string) {
 
 export function useRemoveApplicationMember(appId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (userId: string) =>
       apiFetch(`/api/v1/applications/${appId}/members/${userId}`, { method: "DELETE" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["applications", appId, "members"] }),
@@ -355,6 +363,7 @@ export function useApplicationServices(appId: string) {
 
 export function useDeleteService(appId: string, serviceId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: () =>
       apiFetch(`/api/v1/applications/${appId}/services/${serviceId}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -378,6 +387,7 @@ export function useRenameService(appId: string, serviceId: string) {
 
 export function useUpdateService(appId: string, serviceId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: {
       name: string;
       build_tool: string;
@@ -399,6 +409,7 @@ export function useUpdateService(appId: string, serviceId: string) {
 
 export function useReprovisionService(appId: string, serviceId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: () =>
       apiFetch(`/api/v1/applications/${appId}/services/${serviceId}/reprovision`, {
         method: "POST",
@@ -412,6 +423,7 @@ export function useReprovisionService(appId: string, serviceId: string) {
 
 export function useCreateService(appId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: {
       name: string;
       build_tool: string;
@@ -497,6 +509,7 @@ export function useTeam(id: string) {
 
 export function useCreateTeam() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { name: string }) =>
       apiFetch<Team>("/api/v1/teams", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
@@ -507,6 +520,7 @@ export function useCreateTeam() {
 
 export function useUpdateTeam(teamId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { name: string }) =>
       apiFetch<Team>(`/api/v1/teams/${teamId}`, { method: "PUT", body: JSON.stringify(body) }),
     onSuccess: () => {
@@ -518,6 +532,7 @@ export function useUpdateTeam(teamId: string) {
 
 export function useDeleteTeam(teamId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: () => apiFetch(`/api/v1/teams/${teamId}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["teams"] });
@@ -535,6 +550,7 @@ export function useTeamMembers(teamId: string) {
 
 export function useAddTeamMember(teamId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { user_id: string; role: string }) =>
       apiFetch(`/api/v1/teams/${teamId}/members`, {
         method: "POST",
@@ -546,8 +562,9 @@ export function useAddTeamMember(teamId: string) {
   });
 }
 
-export function useRemoveTeamMember(teamId: string) {
+export function useRemoveTeamMember(teamId: string, opts: { inlineErrors?: boolean } = {}) {
   return useMutation({
+    ...(opts.inlineErrors ? INLINE_ERRORS : {}),
     mutationFn: (userId: string) =>
       apiFetch(`/api/v1/teams/${teamId}/members/${userId}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -574,6 +591,7 @@ export function useCredentials() {
 
 export function useCreateCredential() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { provider_type: string; label: string; token: string }) =>
       apiFetch<Credential>("/api/v1/credentials", {
         method: "POST",
@@ -587,6 +605,7 @@ export function useCreateCredential() {
 
 export function useDeleteCredential() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (id: string) =>
       apiFetch(`/api/v1/credentials/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -641,6 +660,7 @@ export function useUsers() {
 
 export function useCreateUser() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { display_name: string; email: string; password: string; role: string }) =>
       apiFetch<User>("/api/v1/users", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => {
@@ -651,6 +671,7 @@ export function useCreateUser() {
 
 export function useUpdateUserRole() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: ({ userId, role }: { userId: string; role: string }) =>
       apiFetch(`/api/v1/users/${userId}/role`, {
         method: "POST",
@@ -664,6 +685,7 @@ export function useUpdateUserRole() {
 
 export function useDeactivateUser() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (userId: string) =>
       apiFetch(`/api/v1/users/${userId}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -739,6 +761,7 @@ export function useClusters() {
 
 export function useCreateCluster() {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: Partial<Cluster>) =>
       apiFetch<Cluster>("/api/v1/admin/clusters", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["clusters"] }),
@@ -747,6 +770,7 @@ export function useCreateCluster() {
 
 export function useUpdateCluster(clusterId: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: Partial<Cluster>) =>
       apiFetch<Cluster>(`/api/v1/admin/clusters/${clusterId}`, { method: "PUT", body: JSON.stringify(body) }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["clusters"] }),
@@ -764,6 +788,7 @@ export function useClusterServices(clusterId: string) {
 
 export function useUpsertClusterService(clusterId: string, serviceType: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { enabled: boolean; config: Record<string, string> }) =>
       apiFetch<ClusterPlatformService>(
         `/api/v1/admin/clusters/${clusterId}/services/${serviceType}`,
@@ -784,6 +809,7 @@ export function useManifestTemplates() {
 
 export function useUpsertManifestTemplate(name: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: { display_name?: string; conditional?: string; content: string }) =>
       apiFetch<ManifestTemplate>(`/api/v1/admin/manifest-templates/${name}`, {
         method: "PUT",
@@ -803,6 +829,7 @@ export function useEnvironmentProfiles() {
 
 export function useUpdateEnvironmentProfile(name: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: Partial<EnvironmentProfile>) =>
       apiFetch<EnvironmentProfile>(`/api/v1/admin/environment-profiles/${name}`, {
         method: "PUT",
@@ -831,6 +858,7 @@ export function useLanguageProfiles() {
 
 export function useUpsertLanguageProfile(buildTool: string) {
   return useMutation({
+    ...INLINE_ERRORS,
     mutationFn: (body: Partial<LanguageProfile>) =>
       apiFetch<LanguageProfile>(`/api/v1/admin/language-profiles/${buildTool}`, {
         method: "PUT",

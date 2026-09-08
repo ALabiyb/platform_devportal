@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useTeam, useTeamMembers, useAddTeamMember, useRemoveTeamMember, useUsers } from "@/lib/api";
 import { ApiError } from "@/lib/queryClient";
-import { ConfirmDialog, BackLink } from "@/components/kit";
+import { ConfirmDialog, BackLink, Button } from "@/components/kit";
 
 function RoleChip({ label, variant }: { label: string; variant: "org" | "team" }) {
   const colors: Record<string, { fg: string; bg: string }> = {
@@ -39,7 +39,7 @@ export function TeamDetailPage() {
   const { data: members, isLoading: membersLoading } = useTeamMembers(id ?? "");
   const { data: allUsers } = useUsers();
   const addMember = useAddTeamMember(id ?? "");
-  const removeMember = useRemoveTeamMember(id ?? "");
+  const removeMember = useRemoveTeamMember(id ?? "", { inlineErrors: true });
 
   const [showAdd, setShowAdd] = useState(false);
   const [selectedUser, setSelectedUser] = useState("");
@@ -99,12 +99,9 @@ export function TeamDetailPage() {
             <p className="text-[12px] text-[var(--muted)] m-0 font-mono">{team.slug}</p>
           </div>
         </div>
-        <button
-          onClick={() => setShowAdd(!showAdd)}
-          className="h-9 px-4 rounded-md bg-primary border-none text-white text-[13px] font-medium cursor-pointer"
-        >
+        <Button onClick={() => setShowAdd(!showAdd)}>
           + Add member
-        </button>
+        </Button>
       </div>
 
       {/* Add member form */}
@@ -138,13 +135,9 @@ export function TeamDetailPage() {
           </div>
           {addError && <p className="text-[11px] text-[var(--bad)] m-0">{addError}</p>}
           <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={!selectedUser || addMember.isPending}
-              className="h-8 px-5 rounded bg-primary border-none text-white text-[12px] cursor-pointer disabled:opacity-50"
-            >
+            <Button type="submit" size="sm" disabled={!selectedUser} loading={addMember.isPending}>
               {addMember.isPending ? "Adding…" : "Add"}
-            </button>
+            </Button>
             <button
               type="button"
               onClick={() => { setShowAdd(false); setAddError(""); }}

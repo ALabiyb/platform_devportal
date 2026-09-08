@@ -3,18 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useApplications, useApplicationServices, useProvisioningSteps, Application, Project, ProvisioningStep } from "@/lib/api";
+import { langColor } from "@/lib/langColor";
 import { PageHeader, Skeleton } from "@/components/kit";
 
-const LANG_COLOR: Record<string, string> = {
-  maven: "#f87171", gradle: "#f87171", java: "#f87171",
-  go: "#38bdf8",
-  node: "#fbbf24", npm: "#fbbf24",
-  "nodejs-express": "#fbbf24", nextjs: "#f8fafc",
-  python: "#c084fc", pip: "#c084fc", "python-fastapi": "#c084fc",
-  docker: "#60a5fa",
-  dotnet: "#a78bfa",
-  auto: "var(--faint)",
-};
 
 const APP_PALETTE = [
   "#f87171","#fbbf24","#c084fc","#94a3b8","#38bdf8","#4ade80",
@@ -196,7 +187,7 @@ function AppGroup({ app, color, open, onToggle }: {
                 >
                   <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 12.5, fontWeight: 500 }}>{svc.name}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 2, background: LANG_COLOR[svc.build_tool] ?? "var(--faint)", flexShrink: 0 }} />
+                    <span style={{ width: 7, height: 7, borderRadius: 2, background: langColor(svc.build_tool), flexShrink: 0 }} />
                     <span style={{ fontSize: 12, color: "var(--muted)" }}>{svc.build_tool}</span>
                   </div>
                   <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: 11.5, color: "var(--faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

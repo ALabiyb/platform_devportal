@@ -52,6 +52,8 @@
   --lang-go:     #38bdf8;
   --lang-node:   #fbbf24;
   --lang-python: #c084fc;
+  --lang-docker: #60a5fa;
+  --lang-dotnet: #a78bfa;
 
   /* ── shadcn compatibility — derived from brand hues ──────────────────── */
   /* Raw H S% L% triples (no hsl() wrapper) — tailwind.config.js wraps these
@@ -192,6 +194,13 @@
 @keyframes statcount { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 
 /* ── Component base classes ──────────────────────────────────────────────── */
+
+/* Keyboard focus ring (mouse clicks don't trigger :focus-visible) */
+.btn:focus-visible, .field:focus-visible, [role="button"]:focus-visible,
+[role="link"]:focus-visible, .tab-btn:focus-visible, .sidebar-nav-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 
 /* Buttons */
 .btn {

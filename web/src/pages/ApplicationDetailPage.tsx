@@ -53,10 +53,9 @@ function ServiceCard({ svc, appId, onNavigate }: { svc: Project; appId: string; 
             onChange={(e) => setNewName(e.target.value)}
             className="flex-1 h-8 rounded border border-[var(--line)] bg-[var(--bg)] text-[var(--text)] px-2 text-[13px] font-[inherit] focus:outline-none"
           />
-          <button type="submit" disabled={renameService.isPending}
-            className="h-8 px-3 rounded bg-primary border-none text-white text-[12px] cursor-pointer disabled:opacity-50">
-            {renameService.isPending ? "…" : "Save"}
-          </button>
+          <Button type="submit" size="sm" loading={renameService.isPending}>
+            Save
+          </Button>
           <button type="button" onClick={() => { setRenaming(false); setNewName(svc.name); }}
             className="h-8 px-2 rounded border border-[var(--line)] bg-transparent text-[var(--muted)] text-[12px] cursor-pointer">
             Cancel
@@ -253,12 +252,9 @@ export function ApplicationDetailPage() {
           >
             Archive
           </button>
-          <button
-            onClick={() => navigate(`/applications/${appId}/services/new`)}
-            className="h-9 px-4 rounded-md bg-primary border-none text-white text-[13px] font-medium cursor-pointer"
-          >
+          <Button onClick={() => navigate(`/applications/${appId}/services/new`)}>
             + Add service
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -367,10 +363,10 @@ export function ApplicationDetailPage() {
               </select>
               {memberError && <p className="text-[11px] text-[var(--bad)] m-0">{memberError}</p>}
               <div className="flex gap-2">
-                <button type="submit" disabled={!selectedUser || addMember.isPending}
-                  className="flex-1 h-8 rounded bg-primary border-none text-white text-[12px] cursor-pointer disabled:opacity-50">
+                <Button type="submit" size="sm" className="flex-1 justify-center"
+                  disabled={!selectedUser} loading={addMember.isPending}>
                   Add
-                </button>
+                </Button>
                 <button type="button" onClick={() => setShowAddMember(false)}
                   className="flex-1 h-8 rounded border border-[var(--line)] bg-transparent text-[var(--muted)] text-[12px] cursor-pointer">
                   Cancel

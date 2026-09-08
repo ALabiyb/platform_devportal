@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useTheme } from "@/components/Layout";
+import { LANG_COLOR } from "@/lib/langColor";
 import {
   useApplications,
   useApplicationServices,
@@ -30,11 +31,11 @@ const SERVICE_KINDS = [
 ] as const;
 
 const BUILD_TOOLS = [
-  { id: "maven",  lang: "Java 21",       subtitle: "Spring Boot",       image: "temurin:21-jre",     cmd: "mvn -B package",  color: "#f87171" },
-  { id: "gradle", lang: "Kotlin 2.0",    subtitle: "Ktor",              image: "temurin:21-jre",     cmd: "./gradlew build", color: "#4ade80" },
-  { id: "go",     lang: "Go 1.23",       subtitle: "net/http",          image: "distroless:static",  cmd: "go build ./...",  color: "#38bdf8" },
-  { id: "node",   lang: "Node 22",       subtitle: "Fastify",           image: "node:22-alpine",     cmd: "pnpm build",      color: "#fbbf24" },
-  { id: "python", lang: "Python 3.12",   subtitle: "FastAPI",           image: "python:3.12-slim",   cmd: "uv sync",         color: "#c084fc" },
+  { id: "maven",  lang: "Java 21",       subtitle: "Spring Boot",       image: "temurin:21-jre",     cmd: "mvn -B package",  color: LANG_COLOR.maven },
+  { id: "gradle", lang: "Kotlin 2.0",    subtitle: "Ktor",              image: "temurin:21-jre",     cmd: "./gradlew build", color: LANG_COLOR.gradle },
+  { id: "go",     lang: "Go 1.23",       subtitle: "net/http",          image: "distroless:static",  cmd: "go build ./...",  color: LANG_COLOR.go },
+  { id: "node",   lang: "Node 22",       subtitle: "Fastify",           image: "node:22-alpine",     cmd: "pnpm build",      color: LANG_COLOR.node },
+  { id: "python", lang: "Python 3.12",   subtitle: "FastAPI",           image: "python:3.12-slim",   cmd: "uv sync",         color: LANG_COLOR.python },
 ];
 
 const INFRA_OPTIONS = [
@@ -538,7 +539,7 @@ function WizardFooter({ step, canContinue, onBack, onNext, provisioning, allDone
 }) {
   const nextLabel = step === 5 ? (provisioning ? "Provisioning…" : "Provision service") : step === 6 ? (allDone ? "Done" : "Provisioning…") : "Continue";
   return (
-    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "var(--panel)", borderTop: "1px solid var(--line)", padding: "14px 24px", zIndex: 10 }}>
+    <div style={{ position: "sticky", bottom: 0, background: "var(--panel)", borderTop: "1px solid var(--line)", padding: "14px 24px", zIndex: 10 }}>
       <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", alignItems: "center" }}>
         <button className="btn btn-secondary" onClick={onBack} disabled={step === 0 || provisioning} style={{ opacity: step === 0 ? 0.4 : 1 }}>← Back</button>
         <div style={{ flex: 1, textAlign: "center", fontFamily: "JetBrains Mono,monospace", fontSize: 12, color: "var(--faint)" }}>
@@ -635,7 +636,7 @@ export function CreateServicePage() {
   const currentAppName = apps.find((a: Application) => a.id === state.appId)?.name ?? state.appId ?? "—";
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100%", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
       <div style={{ height: 56, background: "var(--panel)", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", padding: "0 24px", gap: 16, flexShrink: 0 }}>
         <Link to="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none" }}>
@@ -665,7 +666,7 @@ export function CreateServicePage() {
       <ProgressRail step={step} maxReached={maxReached} onJump={jumpTo} />
 
       {/* Content */}
-      <div style={{ flex: 1, padding: "36px 24px 120px", maxWidth: 760, margin: "0 auto", width: "100%" }}>
+      <div style={{ flex: 1, padding: "36px 24px 48px", maxWidth: 760, margin: "0 auto", width: "100%" }}>
         <p className="overline accent" style={{ marginBottom: 6 }}>Step {step + 1} of 7 · {STEPS[step]}</p>
         <h2 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--text)", marginBottom: 8, marginTop: 0 }}>
           {["Name the service","Pick a language profile","Port and health checks","Attach infrastructure","Declare service dependencies","Review before provisioning","Provisioning"][step]}
